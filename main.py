@@ -69,6 +69,16 @@ def run_backtest(provider, model_name, test_window, lookahead, timeframe):
 
     backtester = MarketAIBacktester(df_clean, lookahead_periods=lookahead)
 
+    gaps = backtester.df.index.to_series().diff().dt.days.dropna()
+    large_gaps = gaps[gaps > 5]
+    if not large_gaps.empty:
+        print(f"  GAPS > 5 days found:")
+        for date, gap in large_gaps.items():
+            print(f"    {date}: gap of {int(gap)} days before this date")
+    else:
+        print(f"  No large gaps found in backtester.df")
+    print(f"------------------\n")
+
     run_historical_orchestration(
         df_1d_tech=df_1d_tech,
         df_15m_tech=df_15m_tech,

@@ -27,7 +27,7 @@ class MarketAIBacktester:
             return None # Not enough future data yet (edge of the dataset)
             
         entry_price = self.df.iloc[idx]['SP500_Futures']
-        future_idx = idx + self.lookahead
+        future_idx = idx + 1
         future_price = self.df.iloc[future_idx]['SP500_Futures']
         future_timestamp = self.df.index[future_idx]
         

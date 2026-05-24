@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 from ai_agent_connector import get_ai_market_signal
@@ -252,11 +253,15 @@ def run_historical_orchestration(
             else:
                 signal = "HOLD"
 
+            match = re.search(r"###\s*Confidence\s*\n.*?(\d+(?:\.\d+)?)\s*%", raw_response, re.IGNORECASE | re.DOTALL)
+            confidence = f"{match.group(1)}%" if match else "N/A"
+
         except Exception as e:
             print(f"  API error: {e} — defaulting to HOLD")
             signal = "HOLD"
+            confidence = "N/A"
 
-        print(f"  Signal: {signal}")
+        print(f"  Signal: {signal}  |  Confidence: {confidence}")
 
         trade_result = backtester.evaluate_signal(current_timestamp, signal)
 
