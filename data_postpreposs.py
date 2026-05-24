@@ -26,7 +26,7 @@ def serialize_for_ai(df_1d, df_15m):
     ai_payload = {
         "metadata": {
             "asset_class": "Equity Index Futures / Volatility Futures",
-            "tickers": ["ES=F", "VX=F"],
+            "tickers": ["ES=F", "^VIX"],
             "current_timestamp": str(df_15m.index[-1]),
         },
         "macro_trend_1d": {

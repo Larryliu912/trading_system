@@ -2,21 +2,45 @@ import yfinance as yf
 import pandas as pd
 
 
-def fetch_and_prepare_data():
-    """Fetches raw futures data from yfinance and returns (df_1d_tech, df_15m_tech) with indicators applied."""
-    tickers = ["ES=F", "VX=F"]
+def _fetch_vix_15m():
+    """
+    Tries ^VIX first for intraday VIX; falls back to VXX (VIX short-term futures ETN)
+    because Yahoo Finance often does not serve intraday data for index symbols.
+    """
+    for ticker in ("^VIX", "VXX"):
+        data = yf.download(ticker, period="60d", interval="15m", progress=False)
+        close = data["Close"] if not data.empty else pd.Series(dtype=float)
+        # squeeze away the ticker-level column if yfinance returns a DataFrame
+        if isinstance(close, pd.DataFrame):
+            close = close.squeeze()
+        if not close.empty:
+            print(f"  VIX 15m source: {ticker}")
+            return close
+    raise RuntimeError("Could not fetch VIX intraday data from ^VIX or VXX.")
 
-    print("Fetching 15-minute futures data (last 60 days)...")
-    raw_15m = yf.download(tickers, period="60d", interval="15m", progress=False)
-    df_15m = raw_15m["Close"][["ES=F", "VX=F"]].copy()
-    df_15m.columns = ["SP500_Futures", "VIX_Futures"]
+
+def fetch_and_prepare_data():
+    """Fetches SP500 (ES=F) and VIX (^VIX) data and returns (df_1d_tech, df_15m_tech) with indicators."""
+
+    # --- 15-minute ---
+    print("Fetching 15-minute SP500 futures data (last 60 days)...")
+    sp500_15m = yf.download("ES=F", period="60d", interval="15m", progress=False)["Close"].squeeze()
+
+    print("Fetching 15-minute VIX data (last 60 days)...")
+    vix_15m = _fetch_vix_15m()
+
+    df_15m = pd.DataFrame({"SP500_Futures": sp500_15m, "VIX_Futures": vix_15m})
     df_15m.ffill(inplace=True)
     df_15m.dropna(inplace=True)
 
-    print("Fetching daily futures data (last 1 year)...")
-    raw_1d = yf.download(tickers, period="1y", interval="1d", progress=False)
-    df_1d = raw_1d["Close"][["ES=F", "VX=F"]].copy()
-    df_1d.columns = ["SP500_Futures", "VIX_Futures"]
+    # --- daily ---
+    print("Fetching daily SP500 futures data (last 1 year)...")
+    sp500_1d = yf.download("ES=F", period="1y", interval="1d", progress=False)["Close"].squeeze()
+
+    print("Fetching daily VIX data (last 1 year)...")
+    vix_1d = yf.download("^VIX", period="1y", interval="1d", progress=False)["Close"].squeeze()
+
+    df_1d = pd.DataFrame({"SP500_Futures": sp500_1d, "VIX_Futures": vix_1d})
     df_1d.dropna(inplace=True)
 
     print(f"Fetched {len(df_15m)} 15m bars and {len(df_1d)} daily bars.")

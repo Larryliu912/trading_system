@@ -47,7 +47,8 @@ def get_ai_market_signal(json_payload, provider="openai", model_name=None):
         "Respond strictly in the following format:\n"
         "### BIAS ASSESSMENT\n[Determine if structural trend and short-term momentum align]\n\n"
         "### VOLATILITY CHECK\n[Analyze VIX futures behavior relative to the market move]\n\n"
-        "### STRATEGIC SIGNAL\n[BUY / SELL / HOLD with a concise 1-sentence tactical justification]"
+        "### STRATEGIC SIGNAL\n[BUY / SELL / HOLD with a concise 1-sentence tactical justification]\n\n"
+        "### Confidence\n[A percentage confidence level for the signal, e.g., 85%]"
     )
 
     # 4. Execute the API call
