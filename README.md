@@ -9,25 +9,31 @@ An AI-powered multi-timeframe analysis system for S&P 500 and VIX futures. It fe
 ```
                         ┌─────────────────────────────────────────┐
                         │               main.py                   │
-                        │          predict | backtest             │
+                        │   predict | backtest                    │
+                        │   --timeframe  day | 4h | 15m           │
+                        │   --analysis   pure-spy | pure-vix      │
+                        │               hybrid-spy | hybrid-vix   │
                         └────────────────┬────────────────────────┘
                                          │
               ┌──────────────────────────▼──────────────────────────┐
               │                    data_utils.py                    │
-              │   yfinance → ES=F (SP500) + ^VIX (VIX Index)        │
-              │   Timeframes: 15-minute (60 days) + Daily (1 year)  │
+              │   yfinance → ES=F and/or ^VIX (per analysis mode)   │
+              │   Timeframes: 1d (1 year) · 4h (180 days)           │
+              │                         · 15m (60 days)             │
               │   Indicators: MA20/60/90, Bollinger Bands, RSI, MACD│
+              │   (computed on the prediction-target column)        │
               └──────────────────────────┬──────────────────────────┘
                                          │
               ┌──────────────────────────▼──────────────────────────┐
               │                 data_postpreposs.py                 │
               │   Compresses macro + micro state → JSON payload     │
-              │   (recent 5 ticks, Bollinger position %, bias tag)  │
+              │   Includes only the assets relevant to the mode     │
               └──────────────────────────┬──────────────────────────┘
                                          │
               ┌──────────────────────────▼──────────────────────────┐
               │               ai_agent_connector.py                 │
               │      OpenAI / DeepSeek / Qwen (DashScope)           │
+              │      System prompt adapts to analysis mode          │
               │      Returns: BIAS · VOLATILITY · SIGNAL            │
               └──────────────────────────┬──────────────────────────┘
                                          │
@@ -36,6 +42,7 @@ An AI-powered multi-timeframe analysis system for S&P 500 and VIX futures. It fe
               ┌──────────────────────────▼──────────────────────────┐
               │                   backtesting.py                    │
               │   Verifies each signal N bars into the future        │
+              │   Evaluates against SP500 or VIX (per mode)         │
               │   Reports: Win Rate, Profit Factor, Total Return     │
               └─────────────────────────────────────────────────────┘
 ```
@@ -73,8 +80,8 @@ Set your API key as an environment variable before running. Only the key for the
 
 **Windows (PowerShell):**
 ```powershell
-$env:OPENAI_API_KEY   = "sk-..."
-$env:DEEPSEEK_API_KEY = "..."
+$env:OPENAI_API_KEY    = "sk-..."
+$env:DEEPSEEK_API_KEY  = "..."
 $env:DASHSCOPE_API_KEY = "..."   # Qwen / Alibaba DashScope
 ```
 
@@ -87,6 +94,35 @@ export DASHSCOPE_API_KEY="..."
 
 ---
 
+## Analysis Modes
+
+The `--analysis` flag controls what data is fetched and what the AI is asked to predict.
+
+| Mode | Data Used | Predicts |
+|---|---|---|
+| `pure-spy` | SP500 only | SP500 direction |
+| `pure-vix` | VIX only | VIX direction |
+| `hybrid-spy` | SP500 + VIX | SP500 direction *(default)* |
+| `hybrid-vix` | SP500 + VIX | VIX direction |
+
+- **Pure modes** fetch a single asset and omit the other from the payload entirely, giving the AI a clean single-asset signal with no cross-asset noise.
+- **Hybrid modes** provide both SP500 and VIX data so the AI can exploit their inverse correlation. `hybrid-spy` predicts where SP500 goes; `hybrid-vix` predicts where VIX goes.
+- Technical indicators (MA, Bollinger Bands, RSI, MACD) are always computed on the **prediction target** column — VIX for vix modes, SP500 for spy modes.
+
+---
+
+## Timeframes
+
+The `--timeframe` flag controls the data granularity and the prediction horizon.
+
+| Timeframe | Data Tiers | Predicts |
+|---|---|---|
+| `day` | Daily bars only | Next trading day's direction |
+| `4h` | Daily + 4-hour bars | Next 4-hour bar's direction |
+| `15m` | Daily + 4h + 15-minute bars | Next 15-minute bar's direction *(default)* |
+
+---
+
 ## Usage
 
 ### Predict — get a live signal right now
@@ -94,14 +130,17 @@ export DASHSCOPE_API_KEY="..."
 Fetches the latest market data and returns one BUY / SELL / HOLD signal.
 
 ```bash
-# OpenAI (default)
-python main.py predict --provider openai
+# Default: hybrid SP500 prediction on 15m timeframe via OpenAI
+python main.py predict
 
-# DeepSeek
-python main.py predict --provider deepseek
+# Pure VIX prediction (daily timeframe)
+python main.py predict --analysis pure-vix --timeframe day
 
-# Qwen with a specific model
-python main.py predict --provider qwen --model qwen-max
+# Hybrid: use SP500 + VIX data to predict VIX direction (4h timeframe)
+python main.py predict --analysis hybrid-vix --timeframe 4h --provider deepseek
+
+# Pure SP500 prediction via Qwen with a specific model
+python main.py predict --analysis pure-spy --provider qwen --model qwen-max
 ```
 
 **Example output:**
@@ -115,8 +154,11 @@ VIX is flat at 13.2. No spike or mean-reversion signal present; volatility
 is not contradicting the directional bias.
 
 ### STRATEGIC SIGNAL
-BUY — Structural uptrend intact with consolidation on the 15m providing a
-low-risk re-entry point.
+BUY S&P 500 Futures — Structural uptrend intact with consolidation on the
+15m providing a low-risk re-entry point.
+
+### Confidence
+72%
 ```
 
 ---
@@ -126,11 +168,14 @@ low-risk re-entry point.
 Replays historical bars one at a time, asks the AI for a signal at each bar, then checks whether the price moved in the predicted direction within the lookahead window.
 
 ```bash
-# Default: test last 20 bars, verify each signal 100 bars (~25 hours) ahead
+# Default: hybrid-spy, 15m timeframe, last 20 bars, 100-bar lookahead
 python main.py backtest --provider openai
 
-# Deeper test: 50 bars, 16-bar lookahead (~4 hours)
-python main.py backtest --provider openai --test-window 50 --lookahead 16
+# Pure VIX backtest on daily bars
+python main.py backtest --analysis pure-vix --timeframe day --test-window 30 --lookahead 1
+
+# Hybrid VIX on 4h, wider window
+python main.py backtest --analysis hybrid-vix --timeframe 4h --test-window 50 --lookahead 4
 
 # Use DeepSeek to reduce cost on large windows
 python main.py backtest --provider deepseek --test-window 100 --lookahead 100
@@ -138,14 +183,22 @@ python main.py backtest --provider deepseek --test-window 100 --lookahead 100
 
 | Flag | Default | Description |
 |---|---|---|
-| `--test-window` | `20` | Number of historical 15m bars to generate signals for |
-| `--lookahead` | `100` | Bars ahead (~25 hours) used to verify each signal |
+| `--analysis` | `hybrid-spy` | Analysis mode (see table above) |
+| `--timeframe` | `15m` | Data granularity and prediction horizon |
+| `--test-window` | `20` | Number of historical bars to generate signals for |
+| `--lookahead` | `1` (day) / `4` (4h) / `100` (15m) | Bars ahead used to verify each signal |
 
 **Example output:**
 ```
-=======================================================
+============================================================
+  AI BACKTEST MODE
+  Timeframe: 15-Min  |  Analysis: Hybrid→SP500  |  Provider: OPENAI
+  Test window: 20 bars  |  Lookahead: 100 bars
+============================================================
+...
+============================================================
   BACKTEST COMPLETE — FINAL METRICS
-=======================================================
+============================================================
 {
     "Summary": {
         "Total Signals Generated": 20,
@@ -168,12 +221,12 @@ python main.py backtest --provider deepseek --test-window 100 --lookahead 100
 
 ## Technical Indicators
 
-All indicators are calculated on the S&P 500 price column of each timeframe.
+Indicators are calculated on the **prediction target** price column for each timeframe tier.
 
 | Indicator | Parameters | Used for |
 |---|---|---|
 | Simple Moving Averages | 20 / 60 / 90 periods | Macro structural bias |
-| Bollinger Bands | 20-period, ±2σ | Micro execution context |
+| Bollinger Bands | 20-period, ±2σ | Execution context and squeeze detection |
 | RSI | 14-period (Wilder's EMA) | Momentum overbought/oversold |
 | MACD | 12 / 26 EMA, 9 signal | Momentum direction and histogram |
 
@@ -181,12 +234,12 @@ All indicators are calculated on the S&P 500 price column of each timeframe.
 
 ## Data Sources
 
-| Data | Ticker | Interval | Lookback |
+| Data | Ticker | Intervals | Lookback |
 |---|---|---|---|
-| S&P 500 Futures | `ES=F` | 15m + 1d | 60 days + 1 year |
-| VIX Index | `^VIX` (fallback: `VXX`) | 15m + 1d | 60 days + 1 year |
+| S&P 500 Futures | `ES=F` | 15m · 1h · 1d | 60 days · 180 days · 1 year |
+| VIX Index | `^VIX` (fallback: `VXX`) | 15m · 1h · 1d | 60 days · 180 days · 1 year |
 
-Data is fetched live from Yahoo Finance via `yfinance` each run. For the 15m VIX feed, `^VIX` is tried first; if Yahoo Finance does not serve intraday index data, `VXX` (VIX Short-Term Futures ETN) is used automatically.
+Data is fetched live from Yahoo Finance via `yfinance` each run. For intraday VIX data, `^VIX` is tried first; if Yahoo Finance does not serve intraday index data, `VXX` (VIX Short-Term Futures ETN) is used automatically. In pure modes, only the relevant asset is fetched.
 
 ---
 
@@ -198,4 +251,4 @@ Data is fetched live from Yahoo Finance via `yfinance` each run. For the 15m VIX
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | Qwen (Alibaba) | `DASHSCOPE_API_KEY` | `qwen-plus` |
 
-All providers use the OpenAI-compatible chat completions API, so switching between them requires only a `--provider` flag change.
+All providers use the OpenAI-compatible chat completions API, so switching between them requires only a `--provider` flag change. The system prompt is automatically tailored to the active analysis mode and timeframe.

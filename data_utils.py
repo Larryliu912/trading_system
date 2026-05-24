@@ -22,75 +22,95 @@ def _fetch_vix_15m():
     return _fetch_vix_intraday(period="60d", interval="15m", label="15m")
 
 
-def _fetch_4h_data():
-    """Fetches 1h SP500 and VIX data then resamples to 4h bars (last 180 days)."""
-    print("Fetching 1h SP500 futures data for 4h resample (last 180 days)...")
-    sp500_1h = yf.download("ES=F", period="180d", interval="1h", progress=False)["Close"].squeeze()
-    sp500_4h = sp500_1h.resample("4h").last().dropna()
+def _fetch_4h_data(analysis="hybrid-spy"):
+    """Fetches 1h data and resamples to 4h bars based on analysis mode."""
+    need_spy = analysis in ("pure-spy", "hybrid-spy", "hybrid-vix")
+    need_vix = analysis in ("pure-vix", "hybrid-spy", "hybrid-vix")
+    df_parts = {}
 
-    print("Fetching 1h VIX data for 4h resample (last 180 days)...")
-    vix_1h = _fetch_vix_intraday(period="180d", interval="1h", label="4h(1h src)")
-    vix_4h = vix_1h.resample("4h").last().dropna()
+    if need_spy:
+        print("Fetching 1h SP500 futures data for 4h resample (last 180 days)...")
+        sp500_1h = yf.download("ES=F", period="180d", interval="1h", progress=False)["Close"].squeeze()
+        df_parts["SP500_Futures"] = sp500_1h.resample("4h").last().dropna()
 
-    df_4h = pd.DataFrame({"SP500_Futures": sp500_4h, "VIX_Futures": vix_4h})
+    if need_vix:
+        print("Fetching 1h VIX data for 4h resample (last 180 days)...")
+        vix_1h = _fetch_vix_intraday(period="180d", interval="1h", label="4h(1h src)")
+        df_parts["VIX_Futures"] = vix_1h.resample("4h").last().dropna()
+
+    df_4h = pd.DataFrame(df_parts)
     df_4h.ffill(inplace=True)
     df_4h.dropna(inplace=True)
-    return add_technical_indicators(df_4h, "SP500_Futures")
+    price_col = "VIX_Futures" if analysis in ("pure-vix", "hybrid-vix") else "SP500_Futures"
+    return add_technical_indicators(df_4h, price_col)
 
 
-def fetch_and_prepare_data(timeframe="15m"):
-    """Fetches SP500 (ES=F) and VIX data and returns (df_1d_tech, df_4h_tech, df_15m_tech).
+def fetch_and_prepare_data(timeframe="15m", analysis="hybrid-spy"):
+    """Fetches market data based on analysis mode and returns (df_1d_tech, df_4h_tech, df_15m_tech).
+
+    analysis modes:
+      pure-spy   SP500 only  → predict SP500 direction
+      pure-vix   VIX only    → predict VIX direction
+      hybrid-spy SP500 + VIX → predict SP500 direction (default)
+      hybrid-vix SP500 + VIX → predict VIX direction
 
     Unused tiers are returned as None:
-      day  → (df_1d, None,   None)
-      4h   → (df_1d, df_4h,  None)
-      15m  → (df_1d, df_4h,  df_15m)
+      day → (df_1d, None,  None)
+      4h  → (df_1d, df_4h, None)
+      15m → (df_1d, df_4h, df_15m)
     """
+    need_spy = analysis in ("pure-spy", "hybrid-spy", "hybrid-vix")
+    need_vix = analysis in ("pure-vix", "hybrid-spy", "hybrid-vix")
+    price_col = "VIX_Futures" if analysis in ("pure-vix", "hybrid-vix") else "SP500_Futures"
 
     # --- daily (always needed) ---
-    print("Fetching daily SP500 futures data (last 1 year)...")
-    sp500_1d = yf.download("ES=F", period="1y", interval="1d", progress=False)["Close"].squeeze()
+    daily_data = {}
 
-    print("Fetching daily VIX data (last 1 year)...")
-    vix_1d = yf.download("^VIX", period="1y", interval="1d", progress=False)["Close"].squeeze()
+    if need_spy:
+        print("Fetching daily SP500 futures data (last 1 year)...")
+        sp500_1d = yf.download("ES=F", period="1y", interval="1d", progress=False)["Close"].squeeze()
+        sp500_1d.index = pd.to_datetime(sp500_1d.index.date)
+        daily_data["SP500_Futures"] = sp500_1d
 
-    # yfinance can return different timezone conventions and even different date sets for
-    # futures vs. indices (e.g. ES=F UTC-aware vs ^VIX timezone-naive, or missing dates
-    # around contract rollovers).  Converting both indices to plain calendar dates
-    # (strips timezone AND time-of-day) guarantees consistent alignment, and using an
-    # outer concat + ffill ensures no dates from either series are silently dropped.
-    sp500_1d.index = pd.to_datetime(sp500_1d.index.date)
-    vix_1d.index  = pd.to_datetime(vix_1d.index.date)
+    if need_vix:
+        print("Fetching daily VIX data (last 1 year)...")
+        vix_1d = yf.download("^VIX", period="1y", interval="1d", progress=False)["Close"].squeeze()
+        vix_1d.index = pd.to_datetime(vix_1d.index.date)
+        daily_data["VIX_Futures"] = vix_1d
 
-    df_1d = pd.concat(
-        [sp500_1d.rename("SP500_Futures"), vix_1d.rename("VIX_Futures")], axis=1
-    )
-    df_1d.ffill(inplace=True)   # forward-fill any isolated missing days
-    df_1d.dropna(inplace=True)  # drop leading rows where even ffill has no prior value
-    df_1d_tech = add_technical_indicators(df_1d, "SP500_Futures")
+    df_1d = pd.DataFrame(daily_data)
+    df_1d.ffill(inplace=True)
+    df_1d.dropna(inplace=True)
+    df_1d_tech = add_technical_indicators(df_1d, price_col)
 
     if timeframe == "day":
         print(f"Fetched {len(df_1d)} daily bars (day mode — intraday fetch skipped).")
         return df_1d_tech, None, None
 
     # --- 4h (needed for both '4h' and '15m' modes) ---
-    df_4h_tech = _fetch_4h_data()
+    df_4h_tech = _fetch_4h_data(analysis)
 
     if timeframe == "4h":
         print(f"Fetched {len(df_4h_tech)} 4h bars and {len(df_1d)} daily bars.")
         return df_1d_tech, df_4h_tech, None
 
     # --- 15-minute ---
-    print("Fetching 15-minute SP500 futures data (last 60 days)...")
-    sp500_15m = yf.download("ES=F", period="60d", interval="15m", progress=False)["Close"].squeeze()
+    intraday_data = {}
 
-    print("Fetching 15-minute VIX data (last 60 days)...")
-    vix_15m = _fetch_vix_15m()
+    if need_spy:
+        print("Fetching 15-minute SP500 futures data (last 60 days)...")
+        sp500_15m = yf.download("ES=F", period="60d", interval="15m", progress=False)["Close"].squeeze()
+        intraday_data["SP500_Futures"] = sp500_15m
 
-    df_15m = pd.DataFrame({"SP500_Futures": sp500_15m, "VIX_Futures": vix_15m})
+    if need_vix:
+        print("Fetching 15-minute VIX data (last 60 days)...")
+        vix_15m = _fetch_vix_15m()
+        intraday_data["VIX_Futures"] = vix_15m
+
+    df_15m = pd.DataFrame(intraday_data)
     df_15m.ffill(inplace=True)
     df_15m.dropna(inplace=True)
-    df_15m_tech = add_technical_indicators(df_15m, "SP500_Futures")
+    df_15m_tech = add_technical_indicators(df_15m, price_col)
 
     print(f"Fetched {len(df_15m)} 15m bars, {len(df_4h_tech)} 4h bars, and {len(df_1d)} daily bars.")
     return df_1d_tech, df_4h_tech, df_15m_tech
