@@ -54,7 +54,16 @@ def fetch_and_prepare_data(timeframe="15m"):
     print("Fetching daily VIX data (last 1 year)...")
     vix_1d = yf.download("^VIX", period="1y", interval="1d", progress=False)["Close"].squeeze()
 
+    # yfinance can return different timezone conventions for futures vs. indices (e.g.
+    # ES=F UTC-aware vs ^VIX timezone-naive).  Stripping timezone before the join
+    # prevents date misalignment that would silently drop most rows from dropna().
+    if sp500_1d.index.tz is not None:
+        sp500_1d.index = sp500_1d.index.tz_localize(None)
+    if vix_1d.index.tz is not None:
+        vix_1d.index = vix_1d.index.tz_localize(None)
+
     df_1d = pd.DataFrame({"SP500_Futures": sp500_1d, "VIX_Futures": vix_1d})
+    df_1d.ffill(inplace=True)   # fill isolated missing days before dropping
     df_1d.dropna(inplace=True)
     df_1d_tech = add_technical_indicators(df_1d, "SP500_Futures")
 

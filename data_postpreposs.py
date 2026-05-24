@@ -213,7 +213,12 @@ def run_historical_orchestration(
     print(f"  STARTING AI BACKTEST LOOP  |  mode={mode_label}  |  window={test_window} bars")
     print(f"{'=' * 55}")
 
-    df_walk = df_1d_tech.dropna() if timeframe == "day" else df_15m_tech.dropna()
+    if timeframe == "day":
+        df_walk = df_1d_tech.dropna()
+    elif timeframe == "4h":
+        df_walk = df_4h_tech.dropna()
+    else:
+        df_walk = df_15m_tech.dropna()
     total_rows = len(df_walk)
 
     start_idx = total_rows - test_window - backtester.lookahead
@@ -257,6 +262,8 @@ def run_historical_orchestration(
 
         if trade_result and signal != "HOLD":
             status = "WON" if trade_result["is_correct"] else "LOST"
+            future_date = str(trade_result['future_timestamp'])[:10]
+            print(f"  Entry: {trade_result['entry_price']}  →  Future [{future_date}]: {trade_result['future_price']}  (Δ {trade_result['price_change_pct']}%)")
             print(f"  Result: {status}  ({trade_result['trade_return_pct']}% return)")
 
         time.sleep(1)

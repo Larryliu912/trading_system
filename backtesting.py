@@ -27,7 +27,9 @@ class MarketAIBacktester:
             return None # Not enough future data yet (edge of the dataset)
             
         entry_price = self.df.iloc[idx]['SP500_Futures']
-        future_price = self.df.iloc[idx + self.lookahead]['SP500_Futures']
+        future_idx = idx + self.lookahead
+        future_price = self.df.iloc[future_idx]['SP500_Futures']
+        future_timestamp = self.df.index[future_idx]
         
         # Calculate the actual percentage change over the window
         price_change_pct = ((future_price - entry_price) / entry_price) * 100
@@ -51,6 +53,7 @@ class MarketAIBacktester:
             "timestamp": timestamp,
             "signal": ai_signal,
             "entry_price": round(entry_price, 2),
+            "future_timestamp": future_timestamp,
             "future_price": round(future_price, 2),
             "price_change_pct": round(price_change_pct, 3),
             "trade_return_pct": round(trade_return, 3),
