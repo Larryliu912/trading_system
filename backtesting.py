@@ -2,14 +2,13 @@ import pandas as pd
 import numpy as np
 
 class MarketAIBacktester:
-    def __init__(self, df_15m, lookahead_periods=16):
+    def __init__(self, df, lookahead_periods=16):
         """
         Args:
-            df_15m (DataFrame): The 15-minute historical futures data containing technical indicators.
-            lookahead_periods (int): How many bars into the future to look to verify accuracy. 
-                                     Default 16 bars = 4 hours of market time.
+            df (DataFrame): Historical futures data with technical indicators (daily or 15m).
+            lookahead_periods (int): How many bars ahead to verify signal accuracy.
         """
-        self.df = df_15m.copy()
+        self.df = df.copy()
         self.lookahead = lookahead_periods
         self.results_log = []
 

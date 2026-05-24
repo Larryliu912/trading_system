@@ -1,7 +1,7 @@
 import os
 from openai import OpenAI
 
-def get_ai_market_signal(json_payload, provider="openai", model_name=None):
+def get_ai_market_signal(json_payload, provider="openai", model_name=None, timeframe="15m"):
     """
     Sends the structured market data payload to the specified AI provider 
     using an OpenAI-compatible client configuration.
@@ -39,17 +39,43 @@ def get_ai_market_signal(json_payload, provider="openai", model_name=None):
     selected_model = model_name if model_name else default_model
 
     # 3. Define the system instructions for market analysis
-    system_prompt = (
-        "You are an expert quantitative trading system assistant specializing in "
-        "Multi-Timeframe Analysis (MTA) for Equity and Volatility Futures.\n\n"
-        "Your task is to analyze the provided market JSON payload containing "
-        "Macro (1d) and Micro (15m) data for S&P 500 and VIX futures, then output a structured response.\n"
-        "Respond strictly in the following format:\n"
-        "### BIAS ASSESSMENT\n[Determine if structural trend and short-term momentum align]\n\n"
-        "### VOLATILITY CHECK\n[Analyze VIX futures behavior relative to the market move]\n\n"
-        "### STRATEGIC SIGNAL\n[BUY / SELL / HOLD with a concise 1-sentence tactical justification]\n\n"
-        "### Confidence\n[A percentage confidence level for the signal, e.g., 85%]"
-    )
+    if timeframe == "day":
+        system_prompt = (
+            "You are an expert quantitative trading system assistant specializing in "
+            "Daily Timeframe Analysis for Equity and Volatility Futures.\n\n"
+            "Your task is to analyze the provided market JSON payload containing "
+            "daily data for S&P 500 futures and VIX, then predict the NEXT TRADING DAY's direction.\n"
+            "Respond strictly in the following format:\n"
+            "### BIAS ASSESSMENT\n[Determine if the structural daily trend and momentum align for tomorrow]\n\n"
+            "### VOLATILITY CHECK\n[Analyze VIX behavior and what it signals for next day's risk environment]\n\n"
+            "### STRATEGIC SIGNAL\n[BUY / SELL / HOLD with a concise 1-sentence justification for next day's direction]\n\n"
+            "### Confidence\n[A percentage confidence level for the signal, e.g., 85%]"
+        )
+    elif timeframe == "4h":
+        system_prompt = (
+            "You are an expert quantitative trading system assistant specializing in "
+            "Multi-Timeframe Swing Analysis (MTA) for Equity and Volatility Futures.\n\n"
+            "Your task is to analyze the provided market JSON payload containing "
+            "Macro (1d) and Swing (4h) data for S&P 500 and VIX futures, then predict the NEXT 4-HOUR bar's direction.\n"
+            "Respond strictly in the following format:\n"
+            "### BIAS ASSESSMENT\n[Determine if the daily structural trend and 4h swing momentum align]\n\n"
+            "### VOLATILITY CHECK\n[Analyze VIX behavior relative to the 4h price action]\n\n"
+            "### STRATEGIC SIGNAL\n[BUY / SELL / HOLD with a concise 1-sentence justification for the next 4 hours]\n\n"
+            "### Confidence\n[A percentage confidence level for the signal, e.g., 85%]"
+        )
+    else:
+        system_prompt = (
+            "You are an expert quantitative trading system assistant specializing in "
+            "Three-Timeframe Analysis (MTA) for Equity and Volatility Futures.\n\n"
+            "Your task is to analyze the provided market JSON payload containing "
+            "Macro (1d), Swing (4h), and Micro (15m) data for S&P 500 and VIX futures, "
+            "then predict the NEXT 15-MINUTE bar's direction.\n"
+            "Respond strictly in the following format:\n"
+            "### BIAS ASSESSMENT\n[Assess alignment across all three timeframes: daily trend, 4h swing, and 15m momentum]\n\n"
+            "### VOLATILITY CHECK\n[Analyze VIX behavior relative to the 4h swing and 15m price action]\n\n"
+            "### STRATEGIC SIGNAL\n[BUY / SELL / HOLD with a concise 1-sentence tactical justification]\n\n"
+            "### Confidence\n[A percentage confidence level for the signal, e.g., 85%]"
+        )
 
     # 4. Execute the API call
     print(f"Sending market payload to {provider.upper()} ({selected_model})...")
