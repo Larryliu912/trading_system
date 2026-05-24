@@ -64,3 +64,102 @@ def serialize_for_ai(df_1d, df_15m):
 # Generate the payload
 ai_ready_json = serialize_for_ai(df_1d_tech, df_15m_tech)
 print(ai_ready_json)
+
+import time
+import json
+import pandas as pd
+
+def run_historical_orchestration(df_1d_tech, df_15m_tech, backtester, test_window=20):
+    """
+    Simulates live execution by walking forward through the historical data.
+    
+    Args:
+        df_1d_tech (DataFrame): The daily macro dataframe.
+        df_15m_tech (DataFrame): The 15m tactical dataframe.
+        backtester (MarketAIBacktester): The initialized backtesting engine.
+        test_window (int): How many recent 15m bars to test (e.g., 20 bars = 5 hours).
+    """
+    print(f"\n{'='*50}")
+    print(f"🚀 STARTING AI ORCHESTRATION LOOP ({test_window} PERIODS)")
+    print(f"{'='*50}")
+    
+    # Ensure data is clean
+    df_15m_clean = df_15m_tech.dropna()
+    total_rows = len(df_15m_clean)
+    
+    # We need to stop the loop before the very end of the dataframe, 
+    # otherwise the backtester won't have future data to verify the final trades.
+    start_idx = total_rows - test_window - backtester.lookahead
+    end_idx = total_rows - backtester.lookahead
+    
+    if start_idx < 0:
+        print("Error: test_window and lookahead are larger than available data.")
+        return
+
+    # Walk forward through time
+    for i in range(start_idx, end_idx):
+        # 1. Slice the data to simulate "current" time (blinding the AI to the future)
+        current_15m_slice = df_15m_clean.iloc[:i+1]
+        current_timestamp = current_15m_slice.index[-1]
+        
+        # 2. Generate the API Payload
+        # (We use the full 1d dataframe here assuming the macro trend doesn't change intraday,
+        # but in strict production, you'd slice the 1d dataframe to match the date as well.)
+        ai_payload = serialize_for_ai(df_1d_tech, current_15m_slice)
+        
+        # 3. Call the AI API
+        print(f"[{current_timestamp}] Analyzing market state...")
+        try:
+            # We use Qwen, DeepSeek, or OpenAI based on your configuration from Step 3
+            # NOTE: For large backtests, keep API rate limits in mind!
+            raw_ai_response = get_ai_market_signal(ai_payload, provider="openai")
+            
+            # 4. Parse the Signal 
+            # We extract the exact word (BUY, SELL, HOLD) from the AI's structured text
+            if "BUY" in raw_ai_response.upper():
+                signal = "BUY"
+            elif "SELL" in raw_ai_response.upper():
+                signal = "SELL"
+            else:
+                signal = "HOLD"
+                
+        except Exception as e:
+            print(f"API Error at {current_timestamp}: {e}")
+            signal = "HOLD" # Fail safe
+            
+        print(f"↳ Signal Generated: {signal}")
+        
+        # 5. Log it into the Backtester
+        trade_result = backtester.evaluate_signal(current_timestamp, signal)
+        
+        if trade_result and signal != "HOLD":
+            status = "✅ WON" if trade_result['is_correct'] else "❌ LOST"
+            print(f"  ↳ Result: {status} ({trade_result['trade_return_pct']}% return)")
+            
+        # Optional: Sleep briefly to avoid tripping free-tier API rate limits
+        time.sleep(1) 
+
+    # 6. Final Evaluation
+    print(f"\n{'='*50}")
+    print("📊 BACKTEST COMPLETE - FINAL METRICS")
+    print(f"{'='*50}")
+    
+    metrics = backtester.calculate_performance_metrics()
+    print(json.dumps(metrics, indent=4))
+
+
+# =====================================================================
+# Execution Block
+# =====================================================================
+if __name__ == "__main__":
+    # 1. Initialize the backtester looking forward 16 periods (4 hours)
+    live_backtester = MarketAIBacktester(df_15m_tech, lookahead_periods=16)
+    
+    # 2. Run the loop for the last 20 periods 
+    # (Testing ~5 hours of market data. Increase test_window for a deeper backtest).
+    run_historical_orchestration(
+        df_1d_tech=df_1d_tech, 
+        df_15m_tech=df_15m_tech, 
+        backtester=live_backtester, 
+        test_window=20
+    )
