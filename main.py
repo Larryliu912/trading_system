@@ -43,7 +43,7 @@ _ANALYSIS_LABELS = {
 }
 
 
-def run_predict(provider, model_name, timeframe, analysis):
+def run_predict(provider, model_name, timeframe="day", analysis="hybrid-spy"):
     print("=" * 60)
     tf_labels = {"day": "NEXT DAY", "4h": "NEXT 4H", "15m": "NEXT 15-MIN"}
     print(f"  AI PREDICTION — {tf_labels.get(timeframe, timeframe)} | {_ANALYSIS_LABELS.get(analysis, analysis)}")
@@ -63,7 +63,7 @@ def run_predict(provider, model_name, timeframe, analysis):
     print("\n" + response)
 
 
-def run_backtest(provider, model_name, test_window, lookahead, timeframe, analysis):
+def run_backtest(provider, model_name, test_window=20, lookahead=30, timeframe='day', analysis='hybrid-spy'):
     print("=" * 60)
     print("  AI BACKTEST MODE")
     mode_label = {"day": "Day", "4h": "4-Hour", "15m": "15-Min"}.get(timeframe, timeframe)

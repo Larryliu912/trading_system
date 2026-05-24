@@ -47,7 +47,7 @@ _TIMEFRAME_CONFIGS = {
 }
 
 
-def get_ai_market_signal(json_payload, provider="openai", model_name=None, timeframe="15m", analysis="hybrid-spy"):
+def get_ai_market_signal(json_payload, provider="qwen", model_name=None, timeframe="day", analysis="hybrid-spy"):
     """
     Sends the structured market data payload to the specified AI provider
     using an OpenAI-compatible client configuration.
@@ -63,7 +63,7 @@ def get_ai_market_signal(json_payload, provider="openai", model_name=None, timef
     elif provider == "deepseek":
         base_url = "https://api.deepseek.com/v1"
         api_key = os.getenv("DEEPSEEK_API_KEY")
-        default_model = "deepseek-chat"
+        default_model = "deepseek-v4-pro"
     elif provider == "qwen":
         base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         api_key = os.getenv("DASHSCOPE_API_KEY")
@@ -84,7 +84,7 @@ def get_ai_market_signal(json_payload, provider="openai", model_name=None, timef
     system_prompt = (
         f"You are an expert {acfg['identity']} specializing in {tfcfg['scope']}.\n\n"
         f"Your task is to analyze the provided market JSON payload containing {acfg['data_desc']}, "
-        f"then predict the {tfcfg['horizon']}'s direction for {target}.\n"
+        f"then predict the {tfcfg['horizon']}'s direction for {target}. You can also calculate the any technical indicators needed by yourself.\n"
         "Respond strictly in the following format:\n"
         f"### BIAS ASSESSMENT\n[{tfcfg['bias_note']} for {target}]\n\n"
         f"### VOLATILITY CHECK\n[Analyze the volatility context and risk environment relevant to {target}]\n\n"
