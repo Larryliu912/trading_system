@@ -15,10 +15,11 @@ Five layers:
 Usage:
   python single_stock_research/main.py AAPL
   python single_stock_research/main.py NVDA --provider deepseek
+  python single_stock_research/main.py NVDA --provider claude
   python single_stock_research/main.py TSLA --portfolio "AAPL 30%, MSFT 20%, cash 50%"
 
 Environment variables:
-  OPENAI_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY
+  OPENAI_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY / ANTHROPIC_API_KEY
 """
 
 import argparse
@@ -395,9 +396,10 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 _PROVIDERS = {
-    "openai":   ("https://api.openai.com/v1",                         "OPENAI_API_KEY",   "gpt-4o"),
-    "deepseek": ("https://api.deepseek.com/v1",                       "DEEPSEEK_API_KEY", "deepseek-chat"),
-    "qwen":     ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY","qwen-plus"),
+    "openai":   ("https://api.openai.com/v1",                         "OPENAI_API_KEY",    "gpt-4o",             {}),
+    "deepseek": ("https://api.deepseek.com/v1",                       "DEEPSEEK_API_KEY",  "deepseek-chat",      {}),
+    "qwen":     ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY", "qwen-plus",          {}),
+    "claude":   ("https://api.anthropic.com/v1",                      "ANTHROPIC_API_KEY", "claude-opus-4-7",  {"default_headers": {"anthropic-version": "2023-06-01"}}),
 }
 
 
@@ -406,13 +408,13 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
     if cfg is None:
         sys.exit(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
 
-    base_url, env_key, default_model = cfg
+    base_url, env_key, default_model, client_kwargs = cfg
     api_key = os.getenv(env_key)
     if not api_key:
         sys.exit(f"Missing env var {env_key} for provider '{provider}'.")
 
     model = model_name or default_model
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    client = OpenAI(base_url=base_url, api_key=api_key, **client_kwargs)
 
     user_msg = (
         f"Please conduct a complete five-layer analysis for **{ticker}**.\n\n"
@@ -429,15 +431,13 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
     print(f"\nStarting five-layer analysis for {ticker} via {provider.upper()} ({model})…\n")
     print("=" * 70)
 
+    create_kwargs = dict(model=model, messages=messages, tools=TOOLS, tool_choice="auto")
+    if provider != "claude":
+        create_kwargs["temperature"] = 0.2
+
     call_count = 0
     while True:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=0.2,
-        )
+        response = client.chat.completions.create(**create_kwargs)
         choice = response.choices[0]
 
         if choice.finish_reason == "tool_calls":
@@ -458,9 +458,22 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
                 })
         else:
             # Final text response
+            content = choice.message.content
             print()
-            print(choice.message.content)
+            print(content)
             print("\n" + "=" * 70)
+
+            out_dir = os.path.join(os.path.dirname(__file__), "reports")
+            os.makedirs(out_dir, exist_ok=True)
+            timestamp = datetime.today().strftime("%Y%m%d_%H%M%S")
+            out_path = os.path.join(out_dir, f"{ticker}_{timestamp}_{provider}.md")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(f"# {ticker} — Five-Layer Analysis\n")
+                f.write(f"**Date:** {datetime.today().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+                f.write(f"**Provider:** {provider} ({model})  \n\n")
+                f.write("---\n\n")
+                f.write(content)
+            print(f"\nReport saved → {out_path}")
             break
 
 
