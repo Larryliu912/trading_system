@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile single_stock_research/main.py)",
+      "Bash(python -m py_compile single_stock_research/prompts.py)"
+    ]
+  }
+}
