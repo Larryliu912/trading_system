@@ -706,7 +706,7 @@ SHORT_TERM_TOOLS = [
 
 _PROVIDERS = {
     "openai":   ("https://api.openai.com/v1",                         "OPENAI_API_KEY",    "gpt-4o",             {}),
-    "deepseek": ("https://api.deepseek.com/v1",                       "DEEPSEEK_API_KEY",  "deepseek-chat",      {}),
+    "deepseek": ("https://api.deepseek.com/v1",                       "DEEPSEEK_API_KEY",  "deepseek-v4-pro",      {}),
     "qwen":     ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY", "qwen-plus",          {}),
     "claude":   ("https://api.anthropic.com/v1",                      "ANTHROPIC_API_KEY", "claude-opus-4-7",  {"default_headers": {"anthropic-version": "2023-06-01"}}),
 }

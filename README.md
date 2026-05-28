@@ -248,7 +248,7 @@ Data is fetched live from Yahoo Finance via `yfinance` each run. For intraday VI
 | Provider | Env Variable | Default Model |
 |---|---|---|
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | Qwen (Alibaba) | `DASHSCOPE_API_KEY` | `qwen-plus` |
 
 All providers use the OpenAI-compatible chat completions API, so switching between them requires only a `--provider` flag change. The system prompt is automatically tailored to the active analysis mode and timeframe.

@@ -1,3 +1,3 @@
 *.pyc
-single_stock_research/*.pyc
+single_stock_research/__pycache__/
 single_stock_research/reports/
