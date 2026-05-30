@@ -90,7 +90,7 @@ def api_run():
     data = request.json or {}
     ticker = data.get("ticker", "").upper().strip()
     provider = data.get("provider", "qwen")
-    short_term = bool(data.get("short_term", False))
+    short_term = bool(data.get("short_term", True))
     portfolio = data.get("portfolio", "").strip()
 
     if not ticker or not ticker.replace(".", "").replace("-", "").replace("^", "").isalnum():

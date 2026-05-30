@@ -200,10 +200,11 @@
       background: #0f172a;
       border-radius: 12px;
       max-width: 880px;
-      margin: 0 auto;
+      margin: 0 auto 16px;
       overflow: hidden;
     }
     #log-wrap.show { display: block; }
+    #log-wrap.collapsed #log-body { display: none; }
 
     #log-hdr {
       background: #1e293b;
@@ -211,9 +212,14 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      cursor: pointer;
+      user-select: none;
     }
+    #log-hdr:hover { background: #253044; }
     #log-title  { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    #log-right  { display: flex; align-items: center; gap: 8px; }
     #log-status { font-size: 11px; color: #64748b; }
+    #log-chev   { font-size: 12px; color: #475569; transition: transform .2s; }
 
     #log-body {
       padding: 14px 16px;
@@ -368,9 +374,12 @@
       <p>Select a report from the sidebar, or click <strong>+ New Research</strong> to run an analysis.</p>
     </div>
     <div id="log-wrap">
-      <div id="log-hdr">
+      <div id="log-hdr" onclick="toggleLogPanel()">
         <span id="log-title">Running Research…</span>
-        <span id="log-status"></span>
+        <span id="log-right">
+          <span id="log-status"></span>
+          <span id="log-chev">▾</span>
+        </span>
       </div>
       <div id="log-body"></div>
     </div>
@@ -425,10 +434,13 @@
   let isShortTerm = false;
 
   // ── Report list ────────────────────────────────
-  async function loadReports() {
+  async function loadReports(autoLoad = false) {
     const res = await fetch('/api/reports');
     allReports = await res.json();
     renderSidebar(allReports);
+    if (autoLoad && allReports.length > 0) {
+      loadReport(allReports[0].filename, null, true);
+    }
   }
 
   function filterReports() {
@@ -512,14 +524,29 @@
     hdr.nextElementSibling.classList.toggle('open');
   }
 
+  function toggleLogPanel() {
+    const wrap = document.getElementById('log-wrap');
+    const chev = document.getElementById('log-chev');
+    const collapsed = wrap.classList.toggle('collapsed');
+    chev.textContent = collapsed ? '▸' : '▾';
+  }
+
   // ── Load report ────────────────────────────────
-  async function loadReport(filename, el) {
+  async function loadReport(filename, el, keepLog = false) {
     activeFile = filename;
     document.querySelectorAll('.report-row').forEach(r => r.classList.remove('active'));
     if (el) el.classList.add('active');
 
     hide('welcome');
-    hide('log-wrap');
+    if (keepLog) {
+      const logWrap = document.getElementById('log-wrap');
+      if (logWrap.classList.contains('show')) {
+        logWrap.classList.add('collapsed');
+        document.getElementById('log-chev').textContent = '▸';
+      }
+    } else {
+      hide('log-wrap');
+    }
     const wrap = document.getElementById('report-wrap');
     wrap.innerHTML = '<div class="spin-wrap"><div class="spin"></div>Loading report…</div>';
     show('report-wrap');
@@ -578,6 +605,9 @@
     // Show log panel
     hide('welcome');
     hide('report-wrap');
+    const logWrap = document.getElementById('log-wrap');
+    logWrap.classList.remove('collapsed');
+    document.getElementById('log-chev').textContent = '▾';
     show('log-wrap');
     document.getElementById('log-title').textContent = `Researching ${ticker}…`;
     document.getElementById('log-status').textContent = 'running';
@@ -613,7 +643,7 @@
         appendLog('✓ ' + msg.data, 'll-ok');
         document.getElementById('log-status').textContent = 'complete';
         es.close(); btn.disabled = false; btn.textContent = 'Run Research';
-        setTimeout(() => loadReports(), 1200);
+        setTimeout(() => loadReports(true), 1200);
       }
       if (msg.type === 'error') {
         appendLog('✗ ' + msg.data, 'll-err');
