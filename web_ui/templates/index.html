@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SP500 Research</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ─────────────────────────────────── */
+    #sidebar {
+      width: 268px;
+      min-width: 268px;
+      background: #1e293b;
+      color: #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #sidebar-header {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid #2d3f55;
+    }
+    #sidebar-header h1 { font-size: 14px; font-weight: 700; color: #f8fafc; letter-spacing: 0.4px; }
+    #sidebar-header p  { font-size: 11px; color: #64748b; margin-top: 2px; }
+
+    #new-btn {
+      margin: 12px;
+      padding: 9px 12px;
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    #new-btn:hover { background: #2563eb; }
+
+    #search-wrap { padding: 0 12px 8px; }
+    #search-input {
+      width: 100%;
+      padding: 7px 10px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 12px;
+      outline: none;
+    }
+    #search-input::placeholder { color: #475569; }
+
+    #report-list { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+
+    .ticker-group { border-bottom: 1px solid #1a2638; }
+
+    .ticker-hdr {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 14px;
+      cursor: pointer;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      transition: background .1s;
+    }
+    .ticker-hdr:hover { background: #253044; }
+    .ticker-hdr .right { display: flex; align-items: center; gap: 6px; }
+    .ticker-hdr .cnt { background: #334155; border-radius: 10px; padding: 1px 7px; font-size: 10px; }
+    .ticker-hdr .chev { font-size: 10px; transition: transform .2s; }
+    .ticker-hdr.open .chev { transform: rotate(90deg); }
+
+    .ticker-items { display: none; }
+    .ticker-items.open { display: block; }
+
+    .report-row {
+      padding: 7px 14px 7px 22px;
+      cursor: pointer;
+      transition: background .1s;
+      border-left: 3px solid transparent;
+    }
+    .report-row:hover { background: #253044; }
+    .report-row.active { background: #1d3a5f; border-left-color: #3b82f6; }
+    .report-row .rdate { font-size: 11px; color: #64748b; }
+    .report-row .rbadges { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+
+    .badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .b-provider  { background: #1e3a5f; color: #7dd3fc; }
+    .b-short     { background: #2d1b4e; color: #c4b5fd; }
+    .b-long      { background: #14291a; color: #86efac; }
+
+    /* ── Main area ───────────────────────────────── */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    #topbar {
+      background: #fff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 13px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    #topbar-title { font-size: 15px; font-weight: 600; color: #1e293b; }
+    #topbar-meta  { font-size: 12px; color: #64748b; }
+
+    #content { flex: 1; overflow-y: auto; padding: 24px; }
+
+    /* welcome */
+    #welcome {
+      text-align: center;
+      padding: 100px 40px 40px;
+      color: #64748b;
+    }
+    #welcome h2 { font-size: 22px; color: #1e293b; margin-bottom: 8px; font-weight: 600; }
+    #welcome p  { font-size: 14px; }
+
+    /* report markdown */
+    #report-wrap {
+      display: none;
+      background: #fff;
+      border-radius: 12px;
+      padding: 36px 40px;
+      max-width: 880px;
+      margin: 0 auto;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+    }
+    #report-wrap.show { display: block; }
+
+    #report-wrap h1       { font-size: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 16px; color: #0f172a; }
+    #report-wrap h2       { font-size: 17px; margin: 1.6em 0 .5em; color: #1e293b; }
+    #report-wrap h3       { font-size: 14px; margin: 1.4em 0 .4em; color: #3b82f6; font-weight: 700; }
+    #report-wrap h4       { font-size: 13px; margin: 1.2em 0 .3em; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+    #report-wrap p        { font-size: 14px; line-height: 1.75; color: #374151; margin: .7em 0; }
+    #report-wrap ul,
+    #report-wrap ol       { padding-left: 22px; margin: .7em 0; }
+    #report-wrap li       { font-size: 14px; line-height: 1.65; color: #374151; margin: .25em 0; }
+    #report-wrap table    { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 13px; }
+    #report-wrap th       { background: #f8fafc; padding: 8px 12px; font-weight: 600; border: 1px solid #e2e8f0; text-align: left; }
+    #report-wrap td       { padding: 7px 12px; border: 1px solid #e2e8f0; }
+    #report-wrap tr:nth-child(even) td { background: #f8fafc; }
+    #report-wrap code     { background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-size: 12px; font-family: Consolas, monospace; }
+    #report-wrap pre code { background: none; padding: 0; }
+    #report-wrap pre      { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 1em 0; font-size: 12px; }
+    #report-wrap blockquote { border-left: 3px solid #3b82f6; padding: 8px 16px; background: #eff6ff; margin: 1em 0; border-radius: 0 6px 6px 0; }
+    #report-wrap strong   { color: #0f172a; }
+    #report-wrap hr       { border: none; border-top: 1px solid #e2e8f0; margin: 1.5em 0; }
+
+    /* log panel */
+    #log-wrap {
+      display: none;
+      background: #0f172a;
+      border-radius: 12px;
+      max-width: 880px;
+      margin: 0 auto;
+      overflow: hidden;
+    }
+    #log-wrap.show { display: block; }
+
+    #log-hdr {
+      background: #1e293b;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #log-title  { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    #log-status { font-size: 11px; color: #64748b; }
+
+    #log-body {
+      padding: 14px 16px;
+      max-height: 520px;
+      overflow-y: auto;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .ll     { color: #94a3b8; white-space: pre-wrap; word-break: break-word; }
+    .ll-ok  { color: #4ade80; font-weight: 700; }
+    .ll-err { color: #f87171; }
+
+    /* spinner */
+    .spin-wrap { display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 14px; padding: 40px; }
+    .spin {
+      width: 16px; height: 16px;
+      border: 2px solid #e2e8f0;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Modal ───────────────────────────────────── */
+    #overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    #overlay.show { display: flex; }
+
+    #modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 28px;
+      width: 460px;
+      max-width: 95vw;
+      box-shadow: 0 24px 64px rgba(0,0,0,.22);
+    }
+    #modal h2 { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 20px; }
+
+    .fg { margin-bottom: 15px; }
+    .fg label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #374151;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .fg input,
+    .fg select,
+    .fg textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #1e293b;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+      font-family: inherit;
+    }
+    .fg input:focus,
+    .fg select:focus,
+    .fg textarea:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.12);
+    }
+    .fg textarea { resize: vertical; min-height: 56px; }
+
+    .mode-row { display: flex; gap: 8px; }
+    .mode-btn {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 7px;
+      cursor: pointer;
+      background: #fff;
+      font-size: 12px;
+      font-weight: 500;
+      color: #6b7280;
+      text-align: center;
+      transition: all .15s;
+    }
+    .mode-btn.on { background: #eff6ff; border-color: #3b82f6; color: #1d4ed8; font-weight: 700; }
+
+    .modal-footer { display: flex; gap: 10px; margin-top: 20px; }
+    .btn-cancel {
+      padding: 10px 18px;
+      background: #fff;
+      color: #6b7280;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-cancel:hover { background: #f9fafb; }
+    .btn-run {
+      flex: 1;
+      padding: 10px;
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-run:hover:not(:disabled) { background: #2563eb; }
+    .btn-run:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    #content ::-webkit-scrollbar-thumb { background: #d1d5db; }
+    #log-body::-webkit-scrollbar-thumb { background: #334155; }
+  </style>
+</head>
+<body>
+
+<!-- ── Sidebar ─────────────────────────────────── -->
+<aside id="sidebar">
+  <div id="sidebar-header">
+    <h1>SP500 Research</h1>
+    <p>AI-Powered Stock Analysis</p>
+  </div>
+  <button id="new-btn" onclick="openModal()">+ New Research</button>
+  <div id="search-wrap">
+    <input id="search-input" type="text" placeholder="Filter tickers…" oninput="filterReports()">
+  </div>
+  <div id="report-list"></div>
+</aside>
+
+<!-- ── Main ───────────────────────────────────── -->
+<main id="main">
+  <div id="topbar">
+    <span id="topbar-title">Stock Research Platform</span>
+    <span id="topbar-meta"></span>
+  </div>
+  <div id="content">
+    <div id="welcome">
+      <h2>Welcome to SP500 Research</h2>
+      <p>Select a report from the sidebar, or click <strong>+ New Research</strong> to run an analysis.</p>
+    </div>
+    <div id="log-wrap">
+      <div id="log-hdr">
+        <span id="log-title">Running Research…</span>
+        <span id="log-status"></span>
+      </div>
+      <div id="log-body"></div>
+    </div>
+    <div id="report-wrap"></div>
+  </div>
+</main>
+
+<!-- ── Modal ──────────────────────────────────── -->
+<div id="overlay" onclick="overlayClick(event)">
+  <div id="modal">
+    <h2>New Research</h2>
+
+    <div class="fg">
+      <label>Ticker Symbol</label>
+      <input id="ticker-in" type="text" placeholder="e.g. NVDA, AAPL, TSLA"
+             oninput="this.value=this.value.toUpperCase()"
+             onkeydown="if(event.key==='Enter')runResearch()">
+    </div>
+
+    <div class="fg">
+      <label>AI Provider</label>
+      <select id="provider-in">
+        <option value="qwen">Qwen (Alibaba DashScope)</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="openai">OpenAI</option>
+        <option value="claude">Claude (Anthropic)</option>
+      </select>
+    </div>
+
+    <div class="fg">
+      <label>Analysis Mode</label>
+      <div class="mode-row">
+        <div class="mode-btn on" id="mode-five"  onclick="setMode('five')">Five-Layer Analysis</div>
+        <div class="mode-btn"   id="mode-short" onclick="setMode('short')">Short-Term Technical</div>
+      </div>
+    </div>
+
+    <div class="fg" id="portfolio-fg">
+      <label>Portfolio Context <span style="color:#9ca3af;font-weight:400;text-transform:none">(optional)</span></label>
+      <textarea id="portfolio-in" placeholder='e.g. "AAPL 30%, MSFT 20%, cash 50%"'></textarea>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-run" id="run-btn" onclick="runResearch()">Run Research</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let allReports = [];
+  let activeFile = null;
+  let isShortTerm = false;
+
+  // ── Report list ────────────────────────────────
+  async function loadReports() {
+    const res = await fetch('/api/reports');
+    allReports = await res.json();
+    renderSidebar(allReports);
+  }
+
+  function filterReports() {
+    const q = document.getElementById('search-input').value.toUpperCase().trim();
+    renderSidebar(q ? allReports.filter(r => r.ticker.includes(q)) : allReports);
+  }
+
+  function renderSidebar(data) {
+    const grouped = {};
+    for (const r of data) {
+      if (!grouped[r.ticker]) grouped[r.ticker] = [];
+      grouped[r.ticker].push(r);
+    }
+
+    const list = document.getElementById('report-list');
+    list.innerHTML = '';
+
+    for (const [ticker, items] of Object.entries(grouped)) {
+      const hasActive = items.some(r => r.filename === activeFile);
+      const div = document.createElement('div');
+      div.className = 'ticker-group';
+      div.innerHTML = `
+        <div class="ticker-hdr ${hasActive ? 'open' : ''}" onclick="toggleGroup(this)">
+          <span>${ticker}</span>
+          <span class="right">
+            <span class="cnt">${items.length}</span>
+            <span class="chev">›</span>
+          </span>
+        </div>
+        <div class="ticker-items ${hasActive ? 'open' : ''}">
+          ${items.map(r => `
+            <div class="report-row ${r.filename === activeFile ? 'active' : ''}"
+                 data-file="${r.filename}"
+                 onclick="loadReport('${escHtml(r.filename)}', this)">
+              <div class="rdate">${r.mtime_str}</div>
+              <div class="rbadges">
+                <span class="badge b-provider">${escHtml(r.provider || 'N/A')}</span>
+                ${r.short_term
+                  ? '<span class="badge b-short">Short-Term</span>'
+                  : '<span class="badge b-long">Long-Term</span>'}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+      list.appendChild(div);
+    }
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function toggleGroup(hdr) {
+    hdr.classList.toggle('open');
+    hdr.nextElementSibling.classList.toggle('open');
+  }
+
+  // ── Load report ────────────────────────────────
+  async function loadReport(filename, el) {
+    activeFile = filename;
+    document.querySelectorAll('.report-row').forEach(r => r.classList.remove('active'));
+    if (el) el.classList.add('active');
+
+    hide('welcome');
+    hide('log-wrap');
+    const wrap = document.getElementById('report-wrap');
+    wrap.innerHTML = '<div class="spin-wrap"><div class="spin"></div>Loading report…</div>';
+    show('report-wrap');
+
+    try {
+      const res = await fetch(`/api/reports/${encodeURIComponent(filename)}`);
+      const data = await res.json();
+      if (data.error) { wrap.innerHTML = `<p style="color:red">${escHtml(data.error)}</p>`; return; }
+      wrap.innerHTML = marked.parse(data.content);
+    } catch (e) {
+      wrap.innerHTML = `<p style="color:red">Failed to load: ${escHtml(e.message)}</p>`;
+      return;
+    }
+
+    const r = allReports.find(r => r.filename === filename);
+    if (r) {
+      document.getElementById('topbar-title').textContent =
+        `${r.ticker} — ${r.short_term ? 'Short-Term Analysis' : 'Five-Layer Analysis'}`;
+      document.getElementById('topbar-meta').textContent =
+        `${r.mtime_str}  ·  ${r.provider || ''}`;
+    }
+  }
+
+  // ── Modal ──────────────────────────────────────
+  function openModal() {
+    document.getElementById('overlay').classList.add('show');
+    document.getElementById('ticker-in').focus();
+  }
+  function closeModal() {
+    document.getElementById('overlay').classList.remove('show');
+  }
+  function overlayClick(e) {
+    if (e.target === document.getElementById('overlay')) closeModal();
+  }
+
+  function setMode(m) {
+    isShortTerm = (m === 'short');
+    document.getElementById('mode-five').classList.toggle('on', !isShortTerm);
+    document.getElementById('mode-short').classList.toggle('on', isShortTerm);
+    document.getElementById('portfolio-fg').style.display = isShortTerm ? 'none' : '';
+  }
+
+  // ── Run research ───────────────────────────────
+  async function runResearch() {
+    const ticker   = document.getElementById('ticker-in').value.trim();
+    const provider = document.getElementById('provider-in').value;
+    const portfolio = document.getElementById('portfolio-in').value.trim();
+
+    if (!ticker) { document.getElementById('ticker-in').focus(); return; }
+
+    const btn = document.getElementById('run-btn');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+    closeModal();
+
+    // Show log panel
+    hide('welcome');
+    hide('report-wrap');
+    show('log-wrap');
+    document.getElementById('log-title').textContent = `Researching ${ticker}…`;
+    document.getElementById('log-status').textContent = 'running';
+    document.getElementById('log-body').innerHTML = '';
+    document.getElementById('topbar-title').textContent = `Running: ${ticker}`;
+    document.getElementById('topbar-meta').textContent = provider;
+
+    let res, json;
+    try {
+      res  = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker, provider, short_term: isShortTerm, portfolio }),
+      });
+      json = await res.json();
+    } catch (e) {
+      appendLog(e.message, 'll-err');
+      btn.disabled = false; btn.textContent = 'Run Research';
+      return;
+    }
+
+    if (json.error) {
+      appendLog(json.error, 'll-err');
+      btn.disabled = false; btn.textContent = 'Run Research';
+      return;
+    }
+
+    const es = new EventSource(`/api/stream/${json.job_id}`);
+    es.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'log')  appendLog(msg.data, 'll');
+      if (msg.type === 'done') {
+        appendLog('✓ ' + msg.data, 'll-ok');
+        document.getElementById('log-status').textContent = 'complete';
+        es.close(); btn.disabled = false; btn.textContent = 'Run Research';
+        setTimeout(() => loadReports(), 1200);
+      }
+      if (msg.type === 'error') {
+        appendLog('✗ ' + msg.data, 'll-err');
+        document.getElementById('log-status').textContent = 'error';
+        es.close(); btn.disabled = false; btn.textContent = 'Run Research';
+      }
+      if (msg.type === 'end') es.close();
+    };
+    es.onerror = () => {
+      appendLog('Connection lost.', 'll-err');
+      es.close(); btn.disabled = false; btn.textContent = 'Run Research';
+    };
+  }
+
+  function appendLog(text, cls) {
+    const body = document.getElementById('log-body');
+    const div  = document.createElement('div');
+    div.className = `ll ${cls}`;
+    div.textContent = text;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  // ── Helpers ────────────────────────────────────
+  function show(id) { document.getElementById(id).classList.add('show'); }
+  function hide(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('show');
+    if (id === 'welcome') el.style.display = 'none';
+  }
+  document.getElementById('welcome').style.display = 'block'; // start visible
+
+  // Boot
+  loadReports();
+</script>
+</body>
+</html>
