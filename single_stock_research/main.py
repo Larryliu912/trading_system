@@ -36,6 +36,7 @@ import pandas as pd
 import yfinance as yf
 from openai import OpenAI
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from prompts import FIVE_LAYER_SYSTEM_PROMPT, SHORT_TERM_SYSTEM_PROMPT
 
 warnings.filterwarnings("ignore")
@@ -695,10 +696,6 @@ SHORT_TERM_TOOLS = [
         },
     },
 ]
-
-# ---------------------------------------------------------------------------
-# System prompt lives in prompts.py
-
 
 # ---------------------------------------------------------------------------
 # Agent loop

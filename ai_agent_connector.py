@@ -6,6 +6,8 @@ import os
 
 from openai import OpenAI
 
+from prompts import MARKET_SIGNAL_SYSTEM_PROMPT
+
 _PROVIDERS = {
     "openai":   ("https://api.openai.com/v1",                         "OPENAI_API_KEY",    "gpt-4o",          {}),
     "deepseek": ("https://api.deepseek.com/v1",                       "DEEPSEEK_API_KEY",  "deepseek-v4-pro", {}),
@@ -13,27 +15,6 @@ _PROVIDERS = {
     "claude":   ("https://api.anthropic.com/v1",                      "ANTHROPIC_API_KEY", "claude-opus-4-7",
                  {"default_headers": {"anthropic-version": "2023-06-01"}}),
 }
-
-_SYSTEM_PROMPT = """You are a quantitative trading signal generator for S&P 500 and VIX futures.
-You receive multi-timeframe market data in JSON format. Analyze the technical indicators and output a single directional signal.
-
-Your response MUST follow this exact format:
-
-### Signal
-[BUY / SELL / HOLD]
-
-### Reasoning
-[2-3 sentences covering the key indicators driving your decision]
-
-### Confidence
-[percentage, e.g., 65%]
-
-Rules:
-- BUY: expect the target asset price to rise in the next bar/period
-- SELL: expect the target asset price to fall in the next bar/period
-- HOLD: no clear edge — stay flat
-- Be realistic about confidence (typical range 45-70%)
-"""
 
 
 def get_ai_market_signal(
@@ -58,7 +39,7 @@ def get_ai_market_signal(
     response = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": MARKET_SIGNAL_SYSTEM_PROMPT},
             {"role": "user", "content": ai_payload},
         ],
         max_tokens=300,

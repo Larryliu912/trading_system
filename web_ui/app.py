@@ -144,69 +144,6 @@ def api_run():
     return jsonify({"job_id": job_id})
 
 
-@app.route("/api/backtest", methods=["POST"])
-def api_backtest():
-    data = request.json or {}
-    ticker = data.get("ticker", "").upper().strip()
-    test_window = data.get("test_window", 30)
-
-    if not ticker or not ticker.replace(".", "").replace("-", "").replace("^", "").isalnum():
-        return jsonify({"error": "Invalid ticker"}), 400
-    try:
-        test_window = int(test_window)
-        if not (5 <= test_window <= 200):
-            raise ValueError()
-    except (ValueError, TypeError):
-        return jsonify({"error": "test_window must be 5–200"}), 400
-
-    job_id = f"bt_{datetime.now().strftime('%H%M%S%f')}"
-    q: queue.Queue = queue.Queue()
-    jobs[job_id] = {"queue": q, "status": "running", "ticker": ticker}
-
-    def run():
-        cmd = [
-            sys.executable,
-            str(REPO_ROOT / "run_backtest.py"),
-            "--ticker", ticker,
-            "--test-window", str(test_window),
-        ]
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=str(REPO_ROOT),
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                env=os.environ.copy(),
-            )
-            for line in proc.stdout:
-                line = line.rstrip("\n\r")
-                if line.startswith("METRICS_JSON:"):
-                    try:
-                        metrics = json.loads(line[len("METRICS_JSON:"):])
-                        q.put({"type": "metrics", "data": metrics})
-                    except Exception:
-                        q.put({"type": "log", "data": line})
-                else:
-                    q.put({"type": "log", "data": line})
-            proc.wait()
-            if proc.returncode == 0:
-                jobs[job_id]["status"] = "done"
-                q.put({"type": "done", "data": "Backtest complete!"})
-            else:
-                jobs[job_id]["status"] = "error"
-                q.put({"type": "error", "data": f"Process exited with code {proc.returncode}"})
-        except Exception as e:
-            jobs[job_id]["status"] = "error"
-            q.put({"type": "error", "data": str(e)})
-        finally:
-            q.put(None)
-
-    threading.Thread(target=run, daemon=True).start()
-    return jsonify({"job_id": job_id})
-
 
 @app.route("/api/stream/<job_id>")
 def api_stream(job_id):

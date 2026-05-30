@@ -339,92 +339,6 @@
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
     #content ::-webkit-scrollbar-thumb { background: #d1d5db; }
     #log-body::-webkit-scrollbar-thumb { background: #334155; }
-
-    /* ── Backtest button ───────────────────────────── */
-    #bt-btn {
-      display: block;
-      margin: 0 12px 10px;
-      padding: 8px 12px;
-      background: #0f172a;
-      color: #7dd3fc;
-      border: 1px solid #1e3a5f;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all .15s;
-      width: calc(100% - 24px);
-      text-align: center;
-    }
-    #bt-btn:hover { background: #1e3a5f; border-color: #3b82f6; }
-
-    /* ── Backtest overlay / modal ─────────────────── */
-    #bt-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,.45);
-      z-index: 200;
-      align-items: center;
-      justify-content: center;
-    }
-    #bt-overlay.show { display: flex; }
-
-    /* ── Metrics result panel ─────────────────────── */
-    #bt-metrics {
-      display: none;
-      background: #fff;
-      border-radius: 12px;
-      padding: 28px 32px;
-      max-width: 880px;
-      margin: 0 auto;
-      box-shadow: 0 1px 4px rgba(0,0,0,.07);
-    }
-    #bt-metrics.show { display: block; }
-    #bt-metrics h2 { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
-    .bt-meta { font-size: 12px; color: #64748b; margin-bottom: 20px; }
-
-    .metrics-section-label {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .8px;
-      color: #94a3b8;
-      margin: 16px 0 8px;
-    }
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-    }
-    .metric-card {
-      background: #f8fafc;
-      border-radius: 10px;
-      padding: 14px 16px;
-      border: 1px solid #e2e8f0;
-    }
-    .mc-label {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .7px;
-      color: #64748b;
-      margin-bottom: 6px;
-    }
-    .mc-value { font-size: 22px; font-weight: 700; color: #0f172a; }
-    .mc-value.pos { color: #16a34a; }
-    .mc-value.neg { color: #dc2626; }
-
-    .bt-log-toggle {
-      font-size: 12px;
-      color: #3b82f6;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 10px 0 0;
-      display: block;
-    }
-    .bt-log-toggle:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -436,7 +350,6 @@
     <p>AI-Powered Stock Analysis</p>
   </div>
   <button id="new-btn" onclick="openModal()">+ New Research</button>
-  <button id="bt-btn" onclick="openBtModal()">⚡ Run Backtest</button>
   <div id="search-wrap">
     <input id="search-input" type="text" placeholder="Filter tickers…" oninput="filterReports()">
   </div>
@@ -462,7 +375,6 @@
       <div id="log-body"></div>
     </div>
     <div id="report-wrap"></div>
-    <div id="bt-metrics"></div>
   </div>
 </main>
 
@@ -508,32 +420,6 @@
   </div>
 </div>
 
-<!-- ── Backtest Modal ──────────────────────────── -->
-<div id="bt-overlay" onclick="btOverlayClick(event)">
-  <div id="modal">
-    <h2>Short-Term Random Backtest</h2>
-    <p style="font-size:13px;color:#64748b;margin:-12px 0 18px">
-      Generates random BUY/SELL/HOLD signals on 15-min bars to establish a chance baseline.
-    </p>
-
-    <div class="fg">
-      <label>Ticker Symbol</label>
-      <input id="bt-ticker" type="text" placeholder="e.g. NVDA, AAPL, SPY"
-             oninput="this.value=this.value.toUpperCase()"
-             onkeydown="if(event.key==='Enter')runBacktest()">
-    </div>
-
-    <div class="fg">
-      <label>Test Window <span style="color:#9ca3af;font-weight:400;text-transform:none">(# of 15-min bars, 5–200)</span></label>
-      <input id="bt-window" type="number" value="30" min="5" max="200">
-    </div>
-
-    <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeBtModal()">Cancel</button>
-      <button class="btn-run" id="bt-run-btn" onclick="runBacktest()">Run Backtest</button>
-    </div>
-  </div>
-</div>
 
 <script>
   let allReports = [];
@@ -761,151 +647,6 @@
     if (id === 'welcome') el.style.display = 'none';
   }
   document.getElementById('welcome').style.display = 'block'; // start visible
-
-  // ── Backtest modal ─────────────────────────────
-  let btMetricsPending = null;
-
-  function openBtModal() {
-    document.getElementById('bt-overlay').classList.add('show');
-    document.getElementById('bt-ticker').focus();
-  }
-  function closeBtModal() {
-    document.getElementById('bt-overlay').classList.remove('show');
-  }
-  function btOverlayClick(e) {
-    if (e.target === document.getElementById('bt-overlay')) closeBtModal();
-  }
-
-  // ── Run backtest ───────────────────────────────
-  async function runBacktest() {
-    const ticker     = document.getElementById('bt-ticker').value.trim();
-    const testWindow = parseInt(document.getElementById('bt-window').value, 10);
-
-    if (!ticker) { document.getElementById('bt-ticker').focus(); return; }
-    if (!testWindow || testWindow < 5 || testWindow > 200) {
-      document.getElementById('bt-window').focus(); return;
-    }
-
-    const btn = document.getElementById('bt-run-btn');
-    btn.disabled = true;
-    btn.textContent = 'Starting…';
-    closeBtModal();
-
-    hide('welcome');
-    hide('report-wrap');
-    hide('bt-metrics');
-    show('log-wrap');
-    document.getElementById('log-title').textContent = `Backtesting ${ticker} · ${testWindow} bars · 15-min`;
-    document.getElementById('log-status').textContent = 'running';
-    document.getElementById('log-body').innerHTML = '';
-    document.getElementById('topbar-title').textContent = `Backtest: ${ticker}`;
-    document.getElementById('topbar-meta').textContent = `${testWindow} bars · 15-min · random signals`;
-
-    btMetricsPending = null;
-
-    let res, data;
-    try {
-      res  = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, test_window: testWindow }),
-      });
-      data = await res.json();
-    } catch (e) {
-      appendLog(e.message, 'll-err');
-      btn.disabled = false; btn.textContent = 'Run Backtest';
-      return;
-    }
-
-    if (data.error) {
-      appendLog(data.error, 'll-err');
-      btn.disabled = false; btn.textContent = 'Run Backtest';
-      return;
-    }
-
-    const es = new EventSource(`/api/stream/${data.job_id}`);
-    es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'log')     appendLog(msg.data, 'll');
-      if (msg.type === 'metrics') btMetricsPending = msg.data;
-      if (msg.type === 'done') {
-        appendLog('✓ ' + msg.data, 'll-ok');
-        document.getElementById('log-status').textContent = 'complete';
-        es.close(); btn.disabled = false; btn.textContent = 'Run Backtest';
-        if (btMetricsPending) renderBtMetrics(btMetricsPending, { ticker, test_window: testWindow });
-      }
-      if (msg.type === 'error') {
-        appendLog('✗ ' + msg.data, 'll-err');
-        document.getElementById('log-status').textContent = 'error';
-        es.close(); btn.disabled = false; btn.textContent = 'Run Backtest';
-      }
-      if (msg.type === 'end') es.close();
-    };
-    es.onerror = () => {
-      appendLog('Connection lost.', 'll-err');
-      es.close(); btn.disabled = false; btn.textContent = 'Run Backtest';
-    };
-  }
-
-  // ── Render metrics cards ───────────────────────
-  function renderBtMetrics(metrics, cfg) {
-    const sum = metrics.Summary   || {};
-    const fin = metrics.Financials || {};
-
-    const winRate     = parseFloat(sum['Active Trade Win Rate']    || 0);
-    const totalReturn = parseFloat(fin['Total Compounded Return']  || 0);
-    const accuracy    = parseFloat(sum['Overall System Accuracy']  || 0);
-    const pf          = parseFloat(fin['Profit Factor']            || 0);
-
-    const summaryCards = [
-      { label: 'Win Rate',      value: sum['Active Trade Win Rate']         || '—', cls: winRate  >= 50 ? 'pos' : 'neg' },
-      { label: 'Total Signals', value: String(sum['Total Signals Generated'] ?? '—'), cls: '' },
-      { label: 'Active Trades', value: String(sum['Active Trades (BUY/SELL)'] ?? '—'), cls: '' },
-      { label: 'Accuracy',      value: sum['Overall System Accuracy']       || '—', cls: accuracy >= 50 ? 'pos' : 'neg' },
-    ];
-    const finCards = [
-      { label: 'Total Return',  value: fin['Total Compounded Return'] || '—', cls: totalReturn >= 0 ? 'pos' : 'neg' },
-      { label: 'Profit Factor', value: String(fin['Profit Factor']    ?? '—'), cls: pf >= 1 ? 'pos' : 'neg' },
-      { label: 'Gross Profits', value: fin['Gross Profits Sum']       || '—', cls: 'pos' },
-      { label: 'Gross Losses',  value: fin['Gross Losses Sum']        || '—', cls: 'neg' },
-    ];
-
-    const cardHtml = c => `<div class="metric-card">
-      <div class="mc-label">${escHtml(c.label)}</div>
-      <div class="mc-value ${c.cls}">${escHtml(c.value)}</div>
-    </div>`;
-
-    document.getElementById('bt-metrics').innerHTML = `
-      <h2>Backtest Results — ${escHtml(cfg.ticker)}</h2>
-      <div class="bt-meta">${cfg.test_window} bars · 15-min · random signals (chance baseline)</div>
-      <div class="metrics-section-label">Performance</div>
-      <div class="metrics-grid">${summaryCards.map(cardHtml).join('')}</div>
-      <div class="metrics-section-label">Financials</div>
-      <div class="metrics-grid">${finCards.map(cardHtml).join('')}</div>
-      <button class="bt-log-toggle" onclick="toggleBtLog()">Show log output ›</button>
-    `;
-
-    hide('log-wrap');
-    show('bt-metrics');
-    document.getElementById('topbar-title').textContent = `Backtest — ${cfg.ticker}`;
-    document.getElementById('topbar-meta').textContent  = `${cfg.test_window} bars · random baseline`;
-  }
-
-  let btLogVisible = false;
-  function toggleBtLog() {
-    btLogVisible = !btLogVisible;
-    const logWrap = document.getElementById('log-wrap');
-    const btn = document.querySelector('.bt-log-toggle');
-    if (btLogVisible) {
-      logWrap.classList.add('show');
-      logWrap.style.maxWidth = '880px';
-      logWrap.style.margin = '16px auto 0';
-      if (btn) btn.textContent = 'Hide log output ›';
-    } else {
-      logWrap.classList.remove('show');
-      if (btn) btn.textContent = 'Show log output ›';
-    }
-  }
 
   // Boot
   loadReports();
