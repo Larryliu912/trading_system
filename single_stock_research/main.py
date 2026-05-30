@@ -30,7 +30,7 @@ import time
 import traceback
 
 def _safe_print(text):
-    enc ='utf-8'
+    enc = sys.stdout.encoding or 'utf-8'
     print(text.encode(enc, errors='replace').decode(enc))
 import warnings
 from datetime import datetime
@@ -770,7 +770,6 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
             # Final text response
             content = choice.message.content
             print()
-            _safe_print(content)
             print("\n" + "=" * 70)
 
             out_dir = os.path.join(os.path.dirname(__file__), "reports")
@@ -842,7 +841,6 @@ def run_short_term_skill(ticker: str, provider: str, model_name: str | None):
         else:
             content = choice.message.content
             print()
-            _safe_print(content)
             print("\n" + "=" * 70)
 
             out_dir = os.path.join(os.path.dirname(__file__), "reports")
