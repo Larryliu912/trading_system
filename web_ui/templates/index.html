@@ -393,9 +393,7 @@
     <div class="fg">
       <label>AI Provider</label>
       <select id="provider-in">
-        <option value="qwen">Qwen (Alibaba DashScope)</option>
         <option value="deepseek">DeepSeek</option>
-        <option value="openai">OpenAI</option>
         <option value="claude">Claude (Anthropic)</option>
       </select>
     </div>
@@ -403,12 +401,12 @@
     <div class="fg">
       <label>Analysis Mode</label>
       <div class="mode-row">
-        <div class="mode-btn on" id="mode-five"  onclick="setMode('five')">Long-Term Analysis</div>
-        <div class="mode-btn"   id="mode-short" onclick="setMode('short')">Short-Term Technical</div>
+        <div class="mode-btn on"   id="mode-short" onclick="setMode('short')">Short-Term Technical</div>
+        <div class="mode-btn" id="mode-five"  onclick="setMode('five')">Long-Term Analysis</div>
       </div>
     </div>
 
-    <div class="fg" id="portfolio-fg">
+    <div class="fg" id="portfolio-fg" style="display:none">
       <label>Portfolio Context <span style="color:#9ca3af;font-weight:400;text-transform:none">(optional)</span></label>
       <textarea id="portfolio-in" placeholder='e.g. "AAPL 30%, MSFT 20%, cash 50%"'></textarea>
     </div>
