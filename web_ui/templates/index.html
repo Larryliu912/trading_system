@@ -35,19 +35,66 @@
     #sidebar-header h1 { font-size: 14px; font-weight: 700; color: #f8fafc; letter-spacing: 0.4px; }
     #sidebar-header p  { font-size: 11px; color: #64748b; margin-top: 2px; }
 
-    #new-btn {
+    .sidebar-btn-row {
+      display: flex;
+      gap: 8px;
       margin: 12px;
-      padding: 9px 12px;
-      background: #3b82f6;
-      color: #fff;
+    }
+    #new-btn, #schedule-btn {
+      flex: 1;
+      padding: 9px 10px;
       border: none;
       border-radius: 8px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       transition: background .15s;
+      color: #fff;
     }
+    #new-btn      { background: #3b82f6; }
     #new-btn:hover { background: #2563eb; }
+    #schedule-btn      { background: #7c3aed; }
+    #schedule-btn:hover { background: #6d28d9; }
+
+    /* schedules panel */
+    #sched-panel {
+      border-top: 1px solid #2d3f55;
+      padding: 10px 12px 8px;
+      flex-shrink: 0;
+    }
+    #sched-panel-hdr {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
+    .sched-item {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .sched-item-row { display: flex; justify-content: space-between; align-items: center; }
+    .sched-tickers { color: #e2e8f0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+    .sched-time    { color: #7c3aed; font-weight: 700; font-size: 12px; }
+    .sched-meta    { color: #475569; font-size: 10px; margin-top: 3px; display: flex; justify-content: space-between; }
+    .sched-status  { padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; }
+    .sched-status.scheduled { background: #1e3a5f; color: #7dd3fc; }
+    .sched-status.running   { background: #14291a; color: #86efac; }
+    .sched-del {
+      background: none;
+      border: none;
+      color: #475569;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .sched-del:hover { color: #f87171; }
+    #no-scheds { color: #334155; font-size: 11px; text-align: center; padding: 4px 0; }
 
     #search-wrap { padding: 0 12px 8px; }
     #search-input {
@@ -245,7 +292,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* ── Modal ───────────────────────────────────── */
-    #overlay {
+    #overlay, #sched-overlay {
       display: none;
       position: fixed;
       inset: 0;
@@ -254,7 +301,7 @@
       align-items: center;
       justify-content: center;
     }
-    #overlay.show { display: flex; }
+    #overlay.show, #sched-overlay.show { display: flex; }
 
     #modal {
       background: #fff;
@@ -339,6 +386,21 @@
     .btn-run:hover:not(:disabled) { background: #2563eb; }
     .btn-run:disabled { background: #93c5fd; cursor: not-allowed; }
 
+    .btn-schedule {
+      flex: 1;
+      padding: 10px;
+      background: #7c3aed;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-schedule:hover:not(:disabled) { background: #6d28d9; }
+    .btn-schedule:disabled { background: #a78bfa; cursor: not-allowed; }
+
     /* scrollbar */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -355,11 +417,18 @@
     <h1>Trading Research System</h1>
     <p>AI-Powered Stock Analysis</p>
   </div>
-  <button id="new-btn" onclick="openModal()">+ New Research</button>
+  <div class="sidebar-btn-row">
+    <button id="new-btn" onclick="openModal()">+ New Research</button>
+    <button id="schedule-btn" onclick="openSchedModal()">⏰ Schedule</button>
+  </div>
   <div id="search-wrap">
     <input id="search-input" type="text" placeholder="Filter tickers…" oninput="filterReports()">
   </div>
   <div id="report-list"></div>
+  <div id="sched-panel">
+    <div id="sched-panel-hdr">Scheduled Tasks</div>
+    <div id="sched-list"><div id="no-scheds">No active schedules</div></div>
+  </div>
 </aside>
 
 <!-- ── Main ───────────────────────────────────── -->
@@ -423,6 +492,38 @@
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-run" id="run-btn" onclick="runResearch()">Run Research</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Schedule Modal ─────────────────────────── -->
+<div id="sched-overlay" onclick="schedOverlayClick(event)">
+  <div id="modal">
+    <h2>Schedule Research</h2>
+
+    <div class="fg">
+      <label>Run Time (daily)</label>
+      <input id="sched-time-in" type="time" value="21:40">
+    </div>
+
+    <div class="fg">
+      <label>Tickers <span style="color:#9ca3af;font-weight:400;text-transform:none">(comma-separated)</span></label>
+      <input id="sched-tickers-in" type="text" placeholder="e.g. AAPL, NVDA, TSLA"
+             oninput="this.value=this.value.toUpperCase()">
+    </div>
+
+    <div class="fg">
+      <label>AI Provider</label>
+      <select id="sched-provider-in">
+        <option value="deepseek">DeepSeek</option>
+        <option value="claude">Claude (Anthropic)</option>
+      </select>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeSchedModal()">Cancel</button>
+      <button class="btn-schedule" id="sched-btn" onclick="createSchedule()">Schedule</button>
     </div>
   </div>
 </div>
@@ -667,6 +768,81 @@
     body.scrollTop = body.scrollHeight;
   }
 
+  // ── Schedule modal ─────────────────────────────
+  function openSchedModal() {
+    document.getElementById('sched-overlay').classList.add('show');
+    document.getElementById('sched-tickers-in').focus();
+  }
+  function closeSchedModal() {
+    document.getElementById('sched-overlay').classList.remove('show');
+  }
+  function schedOverlayClick(e) {
+    if (e.target === document.getElementById('sched-overlay')) closeSchedModal();
+  }
+
+  async function createSchedule() {
+    const time     = document.getElementById('sched-time-in').value.trim() || '21:40';
+    const tickersRaw = document.getElementById('sched-tickers-in').value.trim();
+    const provider = document.getElementById('sched-provider-in').value;
+    if (!tickersRaw) { document.getElementById('sched-tickers-in').focus(); return; }
+
+    const btn = document.getElementById('sched-btn');
+    btn.disabled = true; btn.textContent = 'Scheduling…';
+
+    try {
+      const res  = await fetch('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          time,
+          tickers: tickersRaw.split(',').map(t => t.trim()).filter(Boolean),
+          provider,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+      closeSchedModal();
+      document.getElementById('sched-tickers-in').value = '';
+      loadSchedules();
+    } finally {
+      btn.disabled = false; btn.textContent = 'Schedule';
+    }
+  }
+
+  async function loadSchedules() {
+    const res  = await fetch('/api/schedules');
+    const data = await res.json();
+    renderSchedules(data);
+  }
+
+  function renderSchedules(list) {
+    const container = document.getElementById('sched-list');
+    if (!list.length) {
+      container.innerHTML = '<div id="no-scheds">No active schedules</div>';
+      return;
+    }
+    container.innerHTML = list.map(s => `
+      <div class="sched-item">
+        <div class="sched-item-row">
+          <span class="sched-tickers" title="${escHtml(s.tickers.join(', '))}">${escHtml(s.tickers.join(', '))}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span class="sched-time">${escHtml(s.time)}</span>
+            <button class="sched-del" title="Cancel schedule" onclick="deleteSchedule('${escHtml(s.id)}')">✕</button>
+          </span>
+        </div>
+        <div class="sched-meta">
+          <span><span class="sched-status ${escHtml(s.status)}">${escHtml(s.status)}</span> · ${escHtml(s.provider)}</span>
+          <span>next: ${escHtml(s.next_run || '—')}</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function deleteSchedule(id) {
+    await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    loadSchedules();
+  }
+
   // ── Helpers ────────────────────────────────────
   function show(id) { document.getElementById(id).classList.add('show'); }
   function hide(id) {
@@ -678,6 +854,7 @@
 
   // Boot
   loadReports();
+  loadSchedules();
 </script>
 </body>
 </html>

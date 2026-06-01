@@ -760,7 +760,8 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
                 try:
                     result = _TOOL_MAP[fn_name](fn_args)
                 except Exception as e:
-                    result = {"error": str(e)}
+                    print(f"\n[Fatal] Data fetch failed for {fn_name}: {e}")
+                    sys.exit(1)
                 messages.append({
                     "role":         "tool",
                     "tool_call_id": tc.id,
@@ -772,7 +773,7 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
             print()
             print("\n" + "=" * 70)
 
-            out_dir = os.path.join(os.path.dirname(__file__), "reports")
+            out_dir = os.path.join(os.path.dirname(__file__), "reports", "long_term")
             os.makedirs(out_dir, exist_ok=True)
             timestamp = datetime.today().strftime("%Y%m%d_%H%M%S")
             out_path = os.path.join(out_dir, f"{ticker}_{timestamp}_{provider}.md")
@@ -832,7 +833,8 @@ def run_short_term_skill(ticker: str, provider: str, model_name: str | None):
                 try:
                     result = _TOOL_MAP[fn_name](fn_args)
                 except Exception as e:
-                    result = {"error": str(e)}
+                    print(f"\n[Fatal] Data fetch failed for {fn_name}: {e}")
+                    sys.exit(1)
                 messages.append({
                     "role":         "tool",
                     "tool_call_id": tc.id,
@@ -843,7 +845,7 @@ def run_short_term_skill(ticker: str, provider: str, model_name: str | None):
             print()
             print("\n" + "=" * 70)
 
-            out_dir = os.path.join(os.path.dirname(__file__), "reports")
+            out_dir = os.path.join(os.path.dirname(__file__), "reports", "short_term")
             os.makedirs(out_dir, exist_ok=True)
             timestamp = datetime.today().strftime("%Y%m%d_%H%M%S")
             out_path  = os.path.join(out_dir, f"{ticker}_{timestamp}_{provider}_short_term.md")
