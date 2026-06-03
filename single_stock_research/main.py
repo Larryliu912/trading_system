@@ -434,6 +434,192 @@ def get_short_term_data(ticker: str, days: int = 5) -> dict:
     }
 
 
+_IV_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iv_history.json")
+_iv_history_lock = __import__("threading").Lock()
+
+
+def _load_iv_history() -> dict:
+    try:
+        with open(_IV_HISTORY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_iv_history(data: dict):
+    try:
+        with open(_IV_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def _compute_iv_trend(entries: list) -> dict:
+    """Given entries sorted oldest→newest, return direction and changes vs 1w/1m."""
+    valid = [e for e in entries if e.get("atm_call_iv_pct") is not None]
+    if len(valid) < 2:
+        return {"direction": "insufficient_history", "days_tracked": len(valid)}
+
+    current_iv = valid[-1]["atm_call_iv_pct"]
+    result: dict = {"current_iv": current_iv, "days_tracked": len(valid)}
+
+    for label, lookback in (("1w", 5), ("1m", 20)):
+        idx = max(0, len(valid) - 1 - lookback)
+        past = valid[idx]
+        past_iv = past.get("atm_call_iv_pct")
+        if past_iv and past_iv > 0:
+            change = _round(current_iv - past_iv)
+            result[f"vs_{label}"] = {
+                "date":       past["date"],
+                "past_iv":    past_iv,
+                "change":     change,
+                "change_pct": _round((current_iv / past_iv - 1) * 100),
+            }
+
+    ref = result.get("vs_1w") or result.get("vs_1m") or {}
+    change = ref.get("change", 0) or 0
+    result["direction"] = "rising" if change > 1.0 else "falling" if change < -1.0 else "stable"
+    return result
+
+
+@_retry()
+def get_leap_iv(ticker: str) -> dict:
+    """Return IV for long-term LEAP options at the expirations nearest to 6 months and 1 year out."""
+    t = yf.Ticker(ticker)
+    exps = t.options
+    if not exps:
+        return {"error": "No options data available"}
+
+    try:
+        current_price = float(
+            t.info.get("currentPrice") or t.history(period="1d")["Close"].iloc[-1]
+        )
+    except Exception:
+        current_price = None
+
+    today = pd.Timestamp.today().normalize()
+    targets = {
+        "6m": today + pd.DateOffset(months=6),
+        "1y": today + pd.DateOffset(years=1),
+    }
+    exp_dates = [(e, pd.Timestamp(e)) for e in exps]
+
+    results = {}
+    for label, target_dt in targets.items():
+        exp_str, exp_dt = min(exp_dates, key=lambda x: abs((x[1] - target_dt).days))
+        dte = (exp_dt - today).days
+
+        try:
+            chain = t.option_chain(exp_str)
+            calls, puts = chain.calls.copy(), chain.puts.copy()
+            if calls.empty or puts.empty:
+                results[label] = {"expiration": exp_str, "dte": dte, "error": "Empty chain"}
+                continue
+
+            call_oi = int(calls["openInterest"].fillna(0).sum())
+            put_oi  = int(puts["openInterest"].fillna(0).sum())
+
+            atm_call_iv = atm_put_iv = iv_skew_10 = None
+            otm10_call_iv = otm10_put_iv = None
+
+            if current_price:
+                calls["_d"]   = (calls["strike"] - current_price).abs()
+                puts["_d"]    = (puts["strike"]  - current_price).abs()
+                atm_call_iv   = _round(float(calls.loc[calls["_d"].idxmin(), "impliedVolatility"]) * 100)
+                atm_put_iv    = _round(float(puts.loc[puts["_d"].idxmin(),   "impliedVolatility"]) * 100)
+
+                # ±10% OTM — wider skew window appropriate for multi-month LEAP
+                calls["_d10"] = (calls["strike"] - current_price * 1.10).abs()
+                puts["_d10"]  = (puts["strike"]  - current_price * 0.90).abs()
+                otm10_call_iv = _round(float(calls.loc[calls["_d10"].idxmin(), "impliedVolatility"]) * 100)
+                otm10_put_iv  = _round(float(puts.loc[puts["_d10"].idxmin(),   "impliedVolatility"]) * 100)
+                if otm10_call_iv and otm10_put_iv:
+                    iv_skew_10 = _round(otm10_put_iv - otm10_call_iv)
+
+            top_calls = [
+                {"strike": _round(r["strike"]), "open_interest": int(r["openInterest"]) if pd.notna(r["openInterest"]) else 0}
+                for _, r in calls.nlargest(3, "openInterest").iterrows()
+            ]
+            top_puts = [
+                {"strike": _round(r["strike"]), "open_interest": int(r["openInterest"]) if pd.notna(r["openInterest"]) else 0}
+                for _, r in puts.nlargest(3, "openInterest").iterrows()
+            ]
+
+            results[label] = {
+                "expiration":          exp_str,
+                "dte":                 dte,
+                "atm_call_iv_pct":     atm_call_iv,
+                "atm_put_iv_pct":      atm_put_iv,
+                "otm10_call_iv_pct":   otm10_call_iv,
+                "otm10_put_iv_pct":    otm10_put_iv,
+                "iv_skew_10pct":       iv_skew_10,
+                "put_call_oi_ratio":   _round(put_oi / call_oi) if call_oi else None,
+                "top_call_oi_strikes": top_calls,
+                "top_put_oi_strikes":  top_puts,
+            }
+        except Exception as e:
+            results[label] = {"expiration": exp_str, "dte": dte, "error": str(e)}
+
+    # Historical (realized) volatility at multiple lookback windows
+    hv = {}
+    try:
+        hist = t.history(period="2y", auto_adjust=True)["Close"].dropna()
+        log_ret = (hist / hist.shift(1)).apply(lambda x: x if pd.isna(x) else __import__("math").log(x))
+        for label_hv, window in (("hv_1m", 21), ("hv_3m", 63), ("hv_6m", 126), ("hv_1y", 252)):
+            if len(log_ret) >= window:
+                hv[label_hv] = _round(float(log_ret.iloc[-window:].std() * (252 ** 0.5) * 100))
+    except Exception:
+        pass
+
+    # IV-HV spreads (same-window match)
+    iv_hv_spreads = {}
+    if "6m" in results and results["6m"].get("atm_call_iv_pct") and hv.get("hv_6m"):
+        iv_hv_spreads["6m_iv_minus_hv6m"] = _round(results["6m"]["atm_call_iv_pct"] - hv["hv_6m"])
+    if "1y" in results and results["1y"].get("atm_call_iv_pct") and hv.get("hv_1y"):
+        iv_hv_spreads["1y_iv_minus_hv1y"] = _round(results["1y"]["atm_call_iv_pct"] - hv["hv_1y"])
+
+    # Persist today's snapshot and compute IV trends
+    today_str = str(today.date())
+    iv_trends = {}
+    with _iv_history_lock:
+        history = _load_iv_history()
+        ticker_hist = history.setdefault(ticker, {"6m": [], "1y": []})
+        for tenor in ("6m", "1y"):
+            r = results.get(tenor, {})
+            if r.get("atm_call_iv_pct") is not None:
+                entries = ticker_hist.setdefault(tenor, [])
+                # Replace today's entry if already recorded, otherwise append
+                if entries and entries[-1]["date"] == today_str:
+                    entries[-1].update({
+                        "atm_call_iv_pct": r["atm_call_iv_pct"],
+                        "atm_put_iv_pct":  r.get("atm_put_iv_pct"),
+                        "expiration":      r.get("expiration"),
+                    })
+                else:
+                    entries.append({
+                        "date":            today_str,
+                        "expiration":      r.get("expiration"),
+                        "atm_call_iv_pct": r["atm_call_iv_pct"],
+                        "atm_put_iv_pct":  r.get("atm_put_iv_pct"),
+                    })
+                # Keep last 90 days
+                cutoff = str((today - pd.DateOffset(days=90)).date())
+                ticker_hist[tenor] = [e for e in entries if e["date"] >= cutoff]
+                iv_trends[tenor] = _compute_iv_trend(ticker_hist[tenor])
+        history[ticker] = ticker_hist
+        _save_iv_history(history)
+
+    return {
+        "ticker":           ticker,
+        "current_price":    _round(current_price) if current_price else None,
+        "leap_iv":          results,
+        "realized_vol_pct": hv,
+        "iv_hv_spreads":    iv_hv_spreads,
+        "iv_trends":        iv_trends,
+        "note":             "Nearest expiration to 6m/1y targets. IV skew at ±10% OTM. Positive iv_hv_spread = IV elevated vs realized vol.",
+    }
+
+
 @_retry()
 def get_option_chain(ticker: str, num_expirations: int = 3) -> dict:
     """Return option chain summary: IV, put/call ratios, max pain, top OI strikes."""
@@ -531,6 +717,7 @@ _TOOL_MAP = {
     "get_recent_news":      lambda a: get_recent_news(**a),
     "get_short_term_data":  lambda a: get_short_term_data(**a),
     "get_option_chain":     lambda a: get_option_chain(**a),
+    "get_leap_iv":          lambda a: get_leap_iv(**a),
 }
 
 TOOLS = [
@@ -694,6 +881,25 @@ SHORT_TERM_TOOLS = [
                 "properties": {
                     "ticker": {"type": "string"},
                     "years":  {"type": "integer"},
+                },
+                "required": ["ticker"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_leap_iv",
+            "description": (
+                "Fetch implied volatility for long-term LEAP options at the expirations "
+                "nearest to 6 months and 1 year out. Returns ATM IV, ±10% OTM IV skew, "
+                "put/call OI ratio, and top OI strikes for each tenor. "
+                "Call this alongside get_option_chain for a complete options picture."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
                 },
                 "required": ["ticker"],
             },
