@@ -130,6 +130,7 @@
     .term-hdr:hover { background: #253044; }
     .term-hdr.long-hdr  { border-left: 3px solid #4ade80; }
     .term-hdr.short-hdr { border-left: 3px solid #c4b5fd; }
+    .term-hdr.hyper-hdr { border-left: 3px solid #fb923c; }
     .term-hdr .right { display: flex; align-items: center; gap: 6px; }
     .term-hdr .cnt { background: #334155; border-radius: 10px; padding: 1px 7px; font-size: 10px; color: #94a3b8; }
     .term-hdr .chev { font-size: 10px; transition: transform .2s; color: #64748b; }
@@ -503,11 +504,27 @@
     <h2>Schedule Research</h2>
 
     <div class="fg">
-      <label>Run Time (daily)</label>
-      <input id="sched-time-in" type="time" value="21:40">
+      <label>Task Type</label>
+      <div class="mode-row">
+        <div class="mode-btn on"  id="stype-short"  onclick="setSchedType('short_term')">Short-Term Research</div>
+        <div class="mode-btn"     id="stype-hyper"  onclick="setSchedType('hyperscaler')">Hyperscaler AI Check</div>
+      </div>
     </div>
 
     <div class="fg">
+      <label>Frequency</label>
+      <div class="mode-row">
+        <div class="mode-btn on"  id="sfreq-daily"  onclick="setSchedFreq('daily')">Daily</div>
+        <div class="mode-btn"     id="sfreq-weekly" onclick="setSchedFreq('weekly')">Weekly</div>
+      </div>
+    </div>
+
+    <div class="fg">
+      <label>Run Time</label>
+      <input id="sched-time-in" type="time" value="21:40">
+    </div>
+
+    <div class="fg" id="sched-tickers-fg">
       <label>Tickers <span style="color:#9ca3af;font-weight:400;text-transform:none">(comma-separated)</span></label>
       <input id="sched-tickers-in" type="text" placeholder="e.g. AAPL, NVDA, TSLA"
              oninput="this.value=this.value.toUpperCase()">
@@ -551,14 +568,17 @@
 
   function renderSidebar(data) {
     const sections = {
-      long:  { label: 'Long-Term',  cls: 'long-hdr',  tickers: {} },
-      short: { label: 'Short-Term', cls: 'short-hdr', tickers: {} },
+      long:        { label: 'Long-Term',       cls: 'long-hdr',  tickers: {} },
+      short:       { label: 'Short-Term',      cls: 'short-hdr', tickers: {} },
+      hyperscaler: { label: 'Hyperscaler AI',  cls: 'hyper-hdr', tickers: {} },
     };
 
     for (const r of data) {
-      const key = r.short_term ? 'short' : 'long';
-      if (!sections[key].tickers[r.ticker]) sections[key].tickers[r.ticker] = [];
-      sections[key].tickers[r.ticker].push(r);
+      const key = r.report_type === 'hyperscaler' ? 'hyperscaler'
+                : r.short_term ? 'short' : 'long';
+      const groupKey = r.report_type === 'hyperscaler' ? 'Hyperscaler' : r.ticker;
+      if (!sections[key].tickers[groupKey]) sections[key].tickers[groupKey] = [];
+      sections[key].tickers[groupKey].push(r);
     }
 
     const list = document.getElementById('report-list');
@@ -664,10 +684,11 @@
 
     const r = allReports.find(r => r.filename === filename);
     if (r) {
-      document.getElementById('topbar-title').textContent =
-        `${r.ticker} — ${r.short_term ? 'Short-Term Analysis' : 'Long-Term Analysis'}`;
-      document.getElementById('topbar-meta').textContent =
-        `${r.mtime_str}  ·  ${r.provider || ''}`;
+      const typeLabel = r.report_type === 'hyperscaler' ? 'Hyperscaler AI Analysis'
+                      : r.short_term ? 'Short-Term Analysis' : 'Long-Term Analysis';
+      const titleTicker = r.report_type === 'hyperscaler' ? 'GOOGL · AMZN · MSFT · META' : r.ticker;
+      document.getElementById('topbar-title').textContent = `${titleTicker} — ${typeLabel}`;
+      document.getElementById('topbar-meta').textContent  = `${r.mtime_str}  ·  ${r.provider || ''}`;
     }
   }
 
@@ -769,7 +790,24 @@
   }
 
   // ── Schedule modal ─────────────────────────────
+  let schedTaskType = 'short_term';
+  let schedFrequency = 'daily';
+
+  function setSchedType(t) {
+    schedTaskType = t;
+    document.getElementById('stype-short').classList.toggle('on', t === 'short_term');
+    document.getElementById('stype-hyper').classList.toggle('on', t === 'hyperscaler');
+    document.getElementById('sched-tickers-fg').style.display = t === 'hyperscaler' ? 'none' : '';
+  }
+  function setSchedFreq(f) {
+    schedFrequency = f;
+    document.getElementById('sfreq-daily').classList.toggle('on', f === 'daily');
+    document.getElementById('sfreq-weekly').classList.toggle('on', f === 'weekly');
+  }
+
   function openSchedModal() {
+    setSchedType('short_term');
+    setSchedFreq('daily');
     document.getElementById('sched-overlay').classList.add('show');
     document.getElementById('sched-tickers-in').focus();
   }
@@ -782,22 +820,25 @@
 
   async function createSchedule() {
     const time     = document.getElementById('sched-time-in').value.trim() || '21:40';
-    const tickersRaw = document.getElementById('sched-tickers-in').value.trim();
     const provider = document.getElementById('sched-provider-in').value;
-    if (!tickersRaw) { document.getElementById('sched-tickers-in').focus(); return; }
+    const tickersRaw = document.getElementById('sched-tickers-in').value.trim();
+
+    if (schedTaskType === 'short_term' && !tickersRaw) {
+      document.getElementById('sched-tickers-in').focus(); return;
+    }
 
     const btn = document.getElementById('sched-btn');
     btn.disabled = true; btn.textContent = 'Scheduling…';
 
     try {
+      const body = { time, provider, task_type: schedTaskType, frequency: schedFrequency };
+      if (schedTaskType === 'short_term') {
+        body.tickers = tickersRaw.split(',').map(t => t.trim()).filter(Boolean);
+      }
       const res  = await fetch('/api/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          time,
-          tickers: tickersRaw.split(',').map(t => t.trim()).filter(Boolean),
-          provider,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.error) { alert(data.error); return; }
@@ -821,21 +862,26 @@
       container.innerHTML = '<div id="no-scheds">No active schedules</div>';
       return;
     }
-    container.innerHTML = list.map(s => `
-      <div class="sched-item">
-        <div class="sched-item-row">
-          <span class="sched-tickers" title="${escHtml(s.tickers.join(', '))}">${escHtml(s.tickers.join(', '))}</span>
-          <span style="display:flex;align-items:center;gap:6px">
-            <span class="sched-time">${escHtml(s.time)}</span>
-            <button class="sched-del" title="Cancel schedule" onclick="deleteSchedule('${escHtml(s.id)}')">✕</button>
-          </span>
+    container.innerHTML = list.map(s => {
+      const isHyper = s.task_type === 'hyperscaler';
+      const label   = isHyper ? 'Hyperscaler AI' : escHtml((s.tickers || []).join(', '));
+      const freq    = s.frequency === 'weekly' ? 'weekly' : 'daily';
+      return `
+        <div class="sched-item">
+          <div class="sched-item-row">
+            <span class="sched-tickers" title="${label}">${label}</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="sched-time">${escHtml(s.time)}</span>
+              <button class="sched-del" title="Cancel schedule" onclick="deleteSchedule('${escHtml(s.id)}')">✕</button>
+            </span>
+          </div>
+          <div class="sched-meta">
+            <span><span class="sched-status ${escHtml(s.status)}">${escHtml(s.status)}</span> · ${freq} · ${escHtml(s.provider)}</span>
+            <span>next: ${escHtml(s.next_run || '—')}</span>
+          </div>
         </div>
-        <div class="sched-meta">
-          <span><span class="sched-status ${escHtml(s.status)}">${escHtml(s.status)}</span> · ${escHtml(s.provider)}</span>
-          <span>next: ${escHtml(s.next_run || '—')}</span>
-        </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   }
 
   async function deleteSchedule(id) {

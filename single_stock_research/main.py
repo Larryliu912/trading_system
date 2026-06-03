@@ -41,7 +41,7 @@ import yfinance as yf
 from openai import OpenAI
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from prompts import FIVE_LAYER_SYSTEM_PROMPT, SHORT_TERM_SYSTEM_PROMPT
+from prompts import FIVE_LAYER_SYSTEM_PROMPT, SHORT_TERM_SYSTEM_PROMPT, HYPERSCALER_AI_SYSTEM_PROMPT
 
 warnings.filterwarnings("ignore")
 
@@ -704,6 +704,93 @@ def get_option_chain(ticker: str, num_expirations: int = 3) -> dict:
     }
 
 
+_HYPERSCALERS = ["GOOGL", "AMZN", "MSFT", "META"]
+
+
+@_retry(retries=2, wait=3)
+def get_hyperscaler_ai_trends() -> dict:
+    """Fetch quarterly CAPEX, revenue, net income and recent news for GOOGL/AMZN/MSFT/META
+    to assess AI CAPEX trajectory and whether AI is helping or hurting financials."""
+    results = {}
+    for tkr in _HYPERSCALERS:
+        t = yf.Ticker(tkr)
+        entry: dict = {}
+
+        # Quarterly cash flow → CAPEX (yfinance stores as negative; flip to positive)
+        try:
+            cf = t.quarterly_cashflow
+            if "Capital Expenditure" in cf.index:
+                row = cf.loc["Capital Expenditure"].dropna().sort_index()
+                entry["capex_quarterly_M"] = {
+                    str(d.date()): _round(abs(v) / 1e6) for d, v in row.tail(8).items()
+                }
+        except Exception:
+            pass
+
+        # Quarterly income statement
+        try:
+            inc = t.quarterly_income_stmt
+            for field, candidates in (
+                ("revenue_quarterly_M",          ["Total Revenue"]),
+                ("net_income_quarterly_M",        ["Net Income"]),
+                ("operating_income_quarterly_M",  ["Operating Income", "EBIT"]),
+                ("gross_profit_quarterly_M",      ["Gross Profit"]),
+            ):
+                for name in candidates:
+                    if name in inc.index:
+                        row = inc.loc[name].dropna().sort_index()
+                        entry[field] = {str(d.date()): _round(v / 1e6) for d, v in row.tail(8).items()}
+                        break
+        except Exception:
+            pass
+
+        # Derived metrics
+        try:
+            rev = entry.get("revenue_quarterly_M", {})
+            cap = entry.get("capex_quarterly_M", {})
+            opm = entry.get("operating_income_quarterly_M", {})
+            if rev and cap:
+                entry["capex_pct_of_revenue"] = {
+                    d: _round(cap[d] / rev[d] * 100) for d in cap if d in rev and rev[d]
+                }
+            if rev and opm:
+                entry["op_margin_pct"] = {
+                    d: _round(opm[d] / rev[d] * 100) for d in opm if d in rev and rev[d]
+                }
+        except Exception:
+            pass
+
+        # Recent news (last 6 months, max 15 per company)
+        try:
+            cutoff = int((datetime.today() - pd.DateOffset(months=6)).timestamp())
+            news = []
+            for n in (t.news or []):
+                ts = n.get("providerPublishTime") or n.get("pubDate") or 0
+                if ts < cutoff:
+                    continue
+                news.append({
+                    "date":      str(datetime.fromtimestamp(ts).date()),
+                    "title":     n.get("title", ""),
+                    "publisher": n.get("publisher", ""),
+                })
+                if len(news) >= 15:
+                    break
+            entry["recent_news"] = news
+        except Exception:
+            entry["recent_news"] = []
+
+        results[tkr] = entry
+
+    return {
+        "hyperscalers": results,
+        "as_of": str(datetime.today().date()),
+        "analysis_questions": [
+            "Q1: Is AI CAPEX expanding or compressing? Compare capex_quarterly_M and capex_pct_of_revenue across recent quarters for each company and across the group.",
+            "Q2: Is AI helping or hurting revenue and income? Look at revenue_quarterly_M, net_income_quarterly_M, op_margin_pct trends and cross-reference with news headlines mentioning AI revenue contributions or cost pressures.",
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tool dispatch
 # ---------------------------------------------------------------------------
@@ -715,9 +802,10 @@ _TOOL_MAP = {
     "get_company_info":     lambda a: get_company_info(**a),
     "get_macro_indicators": lambda _: get_macro_indicators(),
     "get_recent_news":      lambda a: get_recent_news(**a),
-    "get_short_term_data":  lambda a: get_short_term_data(**a),
-    "get_option_chain":     lambda a: get_option_chain(**a),
-    "get_leap_iv":          lambda a: get_leap_iv(**a),
+    "get_short_term_data":          lambda a: get_short_term_data(**a),
+    "get_option_chain":             lambda a: get_option_chain(**a),
+    "get_leap_iv":                  lambda a: get_leap_iv(**a),
+    "get_hyperscaler_ai_trends":    lambda _: get_hyperscaler_ai_trends(),
 }
 
 TOOLS = [
@@ -907,6 +995,22 @@ SHORT_TERM_TOOLS = [
     },
 ]
 
+HYPERSCALER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_hyperscaler_ai_trends",
+            "description": (
+                "Fetch quarterly CAPEX, revenue, net income, operating margin, and recent news "
+                "for the four AI hyperscalers: GOOGL, AMZN, MSFT, META. "
+                "Use this to answer: (1) Is AI CAPEX across the sector expanding or compressing? "
+                "(2) Is AI investment translating into revenue/income growth, or is it a drag?"
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+]
+
 # ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
@@ -1065,6 +1169,78 @@ def run_short_term_skill(ticker: str, provider: str, model_name: str | None):
             break
 
 
+def run_hyperscaler_skill(provider: str, model_name: str | None):
+    cfg = _PROVIDERS.get(provider)
+    if cfg is None:
+        sys.exit(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
+
+    base_url, env_key, default_model, client_kwargs = cfg
+    api_key = os.getenv(env_key)
+    if not api_key:
+        sys.exit(f"Missing env var {env_key} for provider '{provider}'.")
+
+    model  = model_name or default_model
+    client = OpenAI(base_url=base_url, api_key=api_key, **client_kwargs)
+
+    user_msg = (
+        f"请分析四大超大规模AI云厂商 (GOOGL/AMZN/MSFT/META) 的AI资本支出和财务趋势。\n\n"
+        f"今天日期: {datetime.today().strftime('%Y-%m-%d')}\n\n"
+        "请先调用 get_hyperscaler_ai_trends，然后完成完整分析，回答两个核心问题。"
+    )
+
+    messages = [
+        {"role": "system", "content": HYPERSCALER_AI_SYSTEM_PROMPT},
+        {"role": "user",   "content": user_msg},
+    ]
+
+    print(f"\nStarting hyperscaler AI trends analysis via {provider.upper()} ({model})…\n")
+    print("=" * 70)
+
+    create_kwargs = dict(model=model, messages=messages, tools=HYPERSCALER_TOOLS, tool_choice="auto")
+    if provider != "claude":
+        create_kwargs["temperature"] = 0.2
+
+    call_count = 0
+    while True:
+        response = client.chat.completions.create(**create_kwargs)
+        choice   = response.choices[0]
+
+        if choice.finish_reason == "tool_calls":
+            messages.append(choice.message)
+            for tc in choice.message.tool_calls:
+                fn_name = tc.function.name
+                fn_args = json.loads(tc.function.arguments)
+                call_count += 1
+                print(f"[Tool call {call_count}] {fn_name}()")
+                try:
+                    result = _TOOL_MAP[fn_name](fn_args)
+                except Exception as e:
+                    print(f"\n[Fatal] Data fetch failed for {fn_name}: {e}")
+                    sys.exit(1)
+                messages.append({
+                    "role":         "tool",
+                    "tool_call_id": tc.id,
+                    "content":      json.dumps(result, default=str),
+                })
+        else:
+            content = choice.message.content
+            print()
+            print("\n" + "=" * 70)
+
+            out_dir = os.path.join(os.path.dirname(__file__), "reports", "hyperscaler")
+            os.makedirs(out_dir, exist_ok=True)
+            timestamp = datetime.today().strftime("%Y%m%d_%H%M%S")
+            out_path  = os.path.join(out_dir, f"hyperscaler_{timestamp}_{provider}.md")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("# Hyperscaler AI CAPEX & Revenue Trends\n")
+                f.write(f"**Date:** {datetime.today().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+                f.write(f"**Provider:** {provider} ({model})  \n\n")
+                f.write("---\n\n")
+                f.write(content)
+            print(f"\nReport saved → {out_path}")
+            break
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1075,7 +1251,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("ticker", help="Stock ticker, e.g. AAPL")
+    parser.add_argument("ticker", nargs="?", default=None, help="Stock ticker, e.g. AAPL (not required for --hyperscaler)")
     parser.add_argument(
         "--provider",
         default="qwen",
@@ -1094,15 +1270,29 @@ def main():
         action="store_true",
         help="Run short-term technical analysis (15m chart + option chain) instead of five-layer research",
     )
+    parser.add_argument(
+        "--hyperscaler",
+        action="store_true",
+        help="Run standalone hyperscaler AI CAPEX & revenue analysis (GOOGL/AMZN/MSFT/META)",
+    )
     args = parser.parse_args()
 
-    if args.short_term:
+    if args.hyperscaler:
+        run_hyperscaler_skill(
+            provider=args.provider,
+            model_name=args.model,
+        )
+    elif args.short_term:
+        if not args.ticker:
+            parser.error("ticker is required for --short-term")
         run_short_term_skill(
             ticker=args.ticker.upper(),
             provider=args.provider,
             model_name=args.model,
         )
     else:
+        if not args.ticker:
+            parser.error("ticker is required for five-layer analysis")
         run_skill(
             ticker=args.ticker.upper(),
             portfolio_context=args.portfolio,

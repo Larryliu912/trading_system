@@ -11,9 +11,10 @@ from flask import Flask, render_template, jsonify, request, Response, stream_wit
 app = Flask(__name__)
 
 REPO_ROOT = Path(__file__).parent.parent
-REPORTS_DIR      = REPO_ROOT / "single_stock_research" / "reports"
-SHORT_TERM_DIR   = REPORTS_DIR / "short_term"
-LONG_TERM_DIR    = REPORTS_DIR / "long_term"
+REPORTS_DIR        = REPO_ROOT / "single_stock_research" / "reports"
+SHORT_TERM_DIR     = REPORTS_DIR / "short_term"
+LONG_TERM_DIR      = REPORTS_DIR / "long_term"
+HYPERSCALER_DIR    = REPORTS_DIR / "hyperscaler"
 
 # In-memory job store (keyed by job_id)
 jobs: dict = {}
@@ -38,32 +39,49 @@ def _execute_schedule(schedule_id: str):
     sched["status"] = "running"
     sched["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def _run_ticker(ticker):
+    task_type = sched.get("task_type", "short_term")
+
+    if task_type == "hyperscaler":
         try:
             cmd = [
                 sys.executable,
                 str(REPO_ROOT / "single_stock_research" / "main.py"),
-                ticker,
+                "--hyperscaler",
                 "--provider", sched["provider"],
-                "--short-term",
             ]
             subprocess.run(cmd, cwd=str(REPO_ROOT), env=os.environ.copy())
         except Exception:
             pass
+    else:
+        def _run_ticker(ticker):
+            try:
+                cmd = [
+                    sys.executable,
+                    str(REPO_ROOT / "single_stock_research" / "main.py"),
+                    ticker,
+                    "--provider", sched["provider"],
+                    "--short-term",
+                ]
+                subprocess.run(cmd, cwd=str(REPO_ROOT), env=os.environ.copy())
+            except Exception:
+                pass
 
-    threads = [threading.Thread(target=_run_ticker, args=[t], daemon=True) for t in sched["tickers"]]
-    for th in threads:
-        th.start()
-    for th in threads:
-        th.join()
+        threads = [threading.Thread(target=_run_ticker, args=[t], daemon=True) for t in sched.get("tickers", [])]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
 
-    # Re-schedule for next day
+    # Re-schedule: daily or weekly
+    extra_days = 6 if sched.get("frequency") == "weekly" else 0
+    delay = _seconds_until(sched["time"]) + extra_days * 86400
+    interval_days = extra_days + 1
     h, m = map(int, sched["time"].split(":"))
-    next_run_dt = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
+    next_run_dt = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=interval_days)
     sched["next_run"] = next_run_dt.strftime("%Y-%m-%d %H:%M")
     sched["status"] = "scheduled"
 
-    timer = threading.Timer(_seconds_until(sched["time"]), _execute_schedule, args=[schedule_id])
+    timer = threading.Timer(delay, _execute_schedule, args=[schedule_id])
     timer.daemon = True
     timer.start()
     sched["timer"] = timer
@@ -98,19 +116,24 @@ def parse_report_stem(stem: str) -> dict:
 
 def list_reports() -> list:
     reports = []
-    for subdir, is_short in ((SHORT_TERM_DIR, True), (LONG_TERM_DIR, False)):
+    for subdir, report_type in (
+        (SHORT_TERM_DIR,   "short_term"),
+        (LONG_TERM_DIR,    "long_term"),
+        (HYPERSCALER_DIR,  "hyperscaler"),
+    ):
         if not subdir.exists():
             continue
         for f in subdir.glob("*.md"):
             stat = f.stat()
             info = parse_report_stem(f.stem)
             reports.append({
-                "filename": f"{subdir.name}/{f.name}",
-                "ticker": info["ticker"],
-                "provider": info["provider"],
-                "short_term": is_short,
-                "mtime": stat.st_mtime,
-                "mtime_str": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                "filename":    f"{subdir.name}/{f.name}",
+                "ticker":      info["ticker"],
+                "provider":    info["provider"],
+                "short_term":  report_type == "short_term",
+                "report_type": report_type,
+                "mtime":       stat.st_mtime,
+                "mtime_str":   datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
             })
     reports.sort(key=lambda x: x["mtime"], reverse=True)
     return reports
@@ -229,9 +252,10 @@ def api_stream(job_id):
 @app.route("/api/schedule", methods=["POST"])
 def api_create_schedule():
     data = request.json or {}
-    time_str = data.get("time", "21:40").strip()
-    tickers_raw = data.get("tickers", [])
-    provider = data.get("provider", "qwen")
+    time_str  = data.get("time", "21:40").strip()
+    provider  = data.get("provider", "qwen")
+    task_type = data.get("task_type", "short_term")   # "short_term" | "hyperscaler"
+    frequency = data.get("frequency", "daily")         # "daily" | "weekly"
 
     try:
         h, m = map(int, time_str.split(":"))
@@ -239,17 +263,23 @@ def api_create_schedule():
     except Exception:
         return jsonify({"error": "Invalid time, use HH:MM"}), 400
 
-    tickers = []
-    raw_list = tickers_raw if isinstance(tickers_raw, list) else str(tickers_raw).split(",")
-    for t in raw_list:
-        t = t.strip().upper()
-        if t and t.replace(".", "").replace("-", "").replace("^", "").isalnum():
-            tickers.append(t)
-    if not tickers:
-        return jsonify({"error": "No valid tickers provided"}), 400
-
     if provider not in ("openai", "deepseek", "qwen", "claude"):
         return jsonify({"error": "Invalid provider"}), 400
+    if task_type not in ("short_term", "hyperscaler"):
+        return jsonify({"error": "Invalid task_type"}), 400
+    if frequency not in ("daily", "weekly"):
+        return jsonify({"error": "Invalid frequency"}), 400
+
+    tickers = []
+    if task_type == "short_term":
+        tickers_raw = data.get("tickers", [])
+        raw_list = tickers_raw if isinstance(tickers_raw, list) else str(tickers_raw).split(",")
+        for t in raw_list:
+            t = t.strip().upper()
+            if t and t.replace(".", "").replace("-", "").replace("^", "").isalnum():
+                tickers.append(t)
+        if not tickers:
+            return jsonify({"error": "No valid tickers provided"}), 400
 
     schedule_id = f"sched_{datetime.now().strftime('%H%M%S%f')}"
     delay = _seconds_until(time_str)
@@ -262,14 +292,16 @@ def api_create_schedule():
     timer.start()
 
     schedules[schedule_id] = {
-        "id":       schedule_id,
-        "time":     time_str,
-        "tickers":  tickers,
-        "provider": provider,
-        "status":   "scheduled",
-        "next_run": next_run_dt.strftime("%Y-%m-%d %H:%M"),
-        "last_run": None,
-        "timer":    timer,
+        "id":        schedule_id,
+        "time":      time_str,
+        "tickers":   tickers,
+        "provider":  provider,
+        "task_type": task_type,
+        "frequency": frequency,
+        "status":    "scheduled",
+        "next_run":  next_run_dt.strftime("%Y-%m-%d %H:%M"),
+        "last_run":  None,
+        "timer":     timer,
     }
     return jsonify({"schedule_id": schedule_id, "next_run": schedules[schedule_id]["next_run"]})
 
