@@ -62,6 +62,13 @@ For each expiration analysed:
 Analyse the 6-month and 1-year expirations INDEPENDENTLY — do not cross-compare them.
 For each tenor, assess its own IV trend using the realized_vol_pct and iv_hv_spreads provided:
 
+**Data quality check (do this first for both tenors):**
+Before interpreting any IV number, check `atm_moneyness_pct` and `data_warnings` in the result.
+If `atm_moneyness_pct` is beyond ±7% the "ATM" strike is actually deep ITM or OTM — yfinance's
+BSM solver gives unreliable IV for such options (near-zero vega means small price errors → huge IV errors).
+If a `data_warning` is present, state it explicitly and treat the IV as unreliable.
+Likewise, if `iv_hv_spreads` contains a `data_warning`, flag it prominently instead of analysing the spread.
+
 6-month LEAP:
 - IV trend (from iv_trends["6m"]): report the direction ("rising"/"falling"/"stable"), the change vs 1 week ago (vs_1w) and vs 1 month ago (vs_1m). This is actual recorded IV history — state the numbers directly.
 - iv_hv_spread (6m IV − HV_6m): positive = options expensive vs same-window realized vol; negative = options cheap.

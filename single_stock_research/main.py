@@ -321,22 +321,56 @@ def get_macro_indicators() -> dict:
 
 
 @_retry()
+def _parse_news_item(n: dict) -> "dict | None":
+    """Parse a yfinance news item supporting both the legacy flat format and the
+    newer nested-content format introduced in yfinance ~0.2.50."""
+    content = n.get("content") or {}
+
+    title = n.get("title") or content.get("title") or ""
+
+    # Legacy: providerPublishTime / pubDate are Unix ints
+    ts: int = n.get("providerPublishTime") or 0
+    if not ts:
+        raw_date = n.get("pubDate") or content.get("pubDate") or ""
+        if isinstance(raw_date, (int, float)):
+            ts = int(raw_date)
+        elif raw_date:
+            try:
+                ts = int(datetime.fromisoformat(
+                    raw_date.replace("Z", "+00:00")
+                ).timestamp())
+            except Exception:
+                ts = 0
+
+    publisher = (n.get("publisher")
+                 or (content.get("provider") or {}).get("displayName")
+                 or "")
+    link = (n.get("link")
+            or (content.get("clickThroughUrl") or {}).get("url")
+            or "")
+
+    if not ts or not title:
+        return None
+    return {
+        "ts":        ts,
+        "date":      str(datetime.fromtimestamp(ts).date()),
+        "title":     title,
+        "publisher": publisher,
+        "link":      link,
+    }
+
+
+@_retry()
 def get_recent_news(ticker: str, max_items: int = 30) -> dict:
     """Return recent news headlines for the ticker from Yahoo Finance."""
     t = yf.Ticker(ticker)
-    raw = t.news or []
     cutoff = int((datetime.today() - pd.DateOffset(years=1)).timestamp())
     items = []
-    for n in raw:
-        ts = n.get("providerPublishTime") or n.get("pubDate") or 0
-        if ts < cutoff:
+    for n in (t.news or []):
+        parsed = _parse_news_item(n)
+        if parsed is None or parsed["ts"] < cutoff:
             continue
-        items.append({
-            "date":      str(datetime.fromtimestamp(ts).date()),
-            "title":     n.get("title", ""),
-            "publisher": n.get("publisher", ""),
-            "link":      n.get("link", ""),
-        })
+        items.append({k: parsed[k] for k in ("date", "title", "publisher", "link")})
         if len(items) >= max_items:
             break
     return {
@@ -521,12 +555,38 @@ def get_leap_iv(ticker: str) -> dict:
 
             atm_call_iv = atm_put_iv = iv_skew_10 = None
             otm10_call_iv = otm10_put_iv = None
+            atm_call_strike = atm_put_strike = None
+            atm_moneyness_pct = None
+            data_warnings = []
 
             if current_price:
-                calls["_d"]   = (calls["strike"] - current_price).abs()
-                puts["_d"]    = (puts["strike"]  - current_price).abs()
-                atm_call_iv   = _round(float(calls.loc[calls["_d"].idxmin(), "impliedVolatility"]) * 100)
-                atm_put_iv    = _round(float(puts.loc[puts["_d"].idxmin(),   "impliedVolatility"]) * 100)
+                calls["_d"] = (calls["strike"] - current_price).abs()
+                puts["_d"]  = (puts["strike"]  - current_price).abs()
+
+                atm_call_row  = calls.loc[calls["_d"].idxmin()]
+                atm_put_row   = puts.loc[puts["_d"].idxmin()]
+                atm_call_strike = _round(float(atm_call_row["strike"]))
+                atm_put_strike  = _round(float(atm_put_row["strike"]))
+
+                # Moneyness: how far the "ATM" strike actually is from current price
+                atm_moneyness_pct = _round((atm_call_strike / current_price - 1) * 100)
+
+                atm_call_iv = _round(float(atm_call_row["impliedVolatility"]) * 100)
+                atm_put_iv  = _round(float(atm_put_row["impliedVolatility"])  * 100)
+
+                # Deep ITM/OTM options have near-zero vega; yfinance IV solver gives
+                # unreliable results. Warn when the "ATM" strike is >7% away from spot
+                # or when IV is suspiciously low (< 5% annualised).
+                if abs(atm_moneyness_pct or 0) > 7:
+                    data_warnings.append(
+                        f"ATM strike {atm_call_strike} is {atm_moneyness_pct:+.1f}% from spot "
+                        f"({current_price}) — IV may be unreliable for deep ITM/OTM options."
+                    )
+                if atm_call_iv is not None and atm_call_iv < 5:
+                    data_warnings.append(
+                        f"ATM call IV ({atm_call_iv}%) is suspiciously low; "
+                        "likely a stale/illiquid quote from yfinance. Verify independently."
+                    )
 
                 # ±10% OTM — wider skew window appropriate for multi-month LEAP
                 calls["_d10"] = (calls["strike"] - current_price * 1.10).abs()
@@ -548,6 +608,9 @@ def get_leap_iv(ticker: str) -> dict:
             results[label] = {
                 "expiration":          exp_str,
                 "dte":                 dte,
+                "atm_call_strike":     atm_call_strike,
+                "atm_put_strike":      atm_put_strike,
+                "atm_moneyness_pct":   atm_moneyness_pct,
                 "atm_call_iv_pct":     atm_call_iv,
                 "atm_put_iv_pct":      atm_put_iv,
                 "otm10_call_iv_pct":   otm10_call_iv,
@@ -556,6 +619,7 @@ def get_leap_iv(ticker: str) -> dict:
                 "put_call_oi_ratio":   _round(put_oi / call_oi) if call_oi else None,
                 "top_call_oi_strikes": top_calls,
                 "top_put_oi_strikes":  top_puts,
+                "data_warnings":       data_warnings or None,
             }
         except Exception as e:
             results[label] = {"expiration": exp_str, "dte": dte, "error": str(e)}
@@ -571,12 +635,21 @@ def get_leap_iv(ticker: str) -> dict:
     except Exception:
         pass
 
-    # IV-HV spreads (same-window match)
+    # IV-HV spreads (same-window match) with data quality flag
     iv_hv_spreads = {}
-    if "6m" in results and results["6m"].get("atm_call_iv_pct") and hv.get("hv_6m"):
-        iv_hv_spreads["6m_iv_minus_hv6m"] = _round(results["6m"]["atm_call_iv_pct"] - hv["hv_6m"])
-    if "1y" in results and results["1y"].get("atm_call_iv_pct") and hv.get("hv_1y"):
-        iv_hv_spreads["1y_iv_minus_hv1y"] = _round(results["1y"]["atm_call_iv_pct"] - hv["hv_1y"])
+    for tenor, hv_key in (("6m", "hv_6m"), ("1y", "hv_1y")):
+        iv = results.get(tenor, {}).get("atm_call_iv_pct")
+        hv_val = hv.get(hv_key)
+        if iv and hv_val:
+            spread = _round(iv - hv_val)
+            entry: dict = {"spread": spread}
+            if abs(spread) > 50:
+                entry["data_warning"] = (
+                    f"|IV − HV| = {abs(spread):.0f}pp — extreme divergence, "
+                    "likely a stale/deep-ITM option quote from yfinance. "
+                    f"ATM strike moneyness: {results[tenor].get('atm_moneyness_pct', 'N/A')}%."
+                )
+            iv_hv_spreads[f"{tenor}_iv_minus_{hv_key}"] = entry
 
     # Persist today's snapshot and compute IV trends
     today_str = str(today.date())
@@ -765,14 +838,10 @@ def get_hyperscaler_ai_trends() -> dict:
             cutoff = int((datetime.today() - pd.DateOffset(months=6)).timestamp())
             news = []
             for n in (t.news or []):
-                ts = n.get("providerPublishTime") or n.get("pubDate") or 0
-                if ts < cutoff:
+                parsed = _parse_news_item(n)
+                if parsed is None or parsed["ts"] < cutoff:
                     continue
-                news.append({
-                    "date":      str(datetime.fromtimestamp(ts).date()),
-                    "title":     n.get("title", ""),
-                    "publisher": n.get("publisher", ""),
-                })
+                news.append({k: parsed[k] for k in ("date", "title", "publisher")})
                 if len(news) >= 15:
                     break
             entry["recent_news"] = news
