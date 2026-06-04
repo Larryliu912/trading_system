@@ -169,11 +169,29 @@
       cursor: pointer;
       transition: background .1s;
       border-left: 3px solid transparent;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 4px;
     }
     .report-row:hover { background: #253044; }
     .report-row.active { background: #1d3a5f; border-left-color: #3b82f6; }
+    .report-row-body { flex: 1; min-width: 0; }
     .report-row .rdate { font-size: 11px; color: #64748b; }
     .report-row .rbadges { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+    .report-del {
+      background: none;
+      border: none;
+      color: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 2px 3px;
+      line-height: 1;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .report-row:hover .report-del { color: #475569; }
+    .report-row:hover .report-del:hover { color: #f87171; }
 
     .badge {
       font-size: 10px;
@@ -463,8 +481,8 @@
     <h2>New Research</h2>
 
     <div class="fg">
-      <label>Ticker Symbol</label>
-      <input id="ticker-in" type="text" placeholder="e.g. NVDA, AAPL, TSLA"
+      <label>Ticker(s) <span style="color:#9ca3af;font-weight:400;text-transform:none">(comma-separated)</span></label>
+      <input id="ticker-in" type="text" placeholder="e.g. NVDA, SPY, AAPL"
              oninput="this.value=this.value.toUpperCase()"
              onkeydown="if(event.key==='Enter')runResearch()">
     </div>
@@ -607,10 +625,14 @@
                 <div class="report-row ${r.filename === activeFile ? 'active' : ''}"
                      data-file="${r.filename}"
                      onclick="loadReport('${escHtml(r.filename)}', this)">
-                  <div class="rdate">${r.mtime_str}</div>
-                  <div class="rbadges">
-                    <span class="badge b-provider">${escHtml(r.provider || 'N/A')}</span>
+                  <div class="report-row-body">
+                    <div class="rdate">${r.mtime_str}</div>
+                    <div class="rbadges">
+                      <span class="badge b-provider">${escHtml(r.provider || 'N/A')}</span>
+                    </div>
                   </div>
+                  <button class="report-del" title="Delete report"
+                          onclick="event.stopPropagation(); deleteReport('${escHtml(r.filename)}')">✕</button>
                 </div>
               `).join('')}
             </div>
@@ -692,6 +714,22 @@
     }
   }
 
+  // ── Delete report ──────────────────────────────
+  async function deleteReport(filename) {
+    const res  = await fetch(`/api/reports/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    if (activeFile === filename) {
+      activeFile = null;
+      hide('report-wrap');
+      document.getElementById('welcome').style.display = 'block';
+      show('welcome');
+      document.getElementById('topbar-title').textContent = 'Stock Research Platform';
+      document.getElementById('topbar-meta').textContent  = '';
+    }
+    await loadReports();
+  }
+
   // ── Modal ──────────────────────────────────────
   function openModal() {
     document.getElementById('overlay').classList.add('show');
@@ -713,71 +751,74 @@
 
   // ── Run research ───────────────────────────────
   async function runResearch() {
-    const ticker   = document.getElementById('ticker-in').value.trim();
-    const provider = document.getElementById('provider-in').value;
+    const rawInput  = document.getElementById('ticker-in').value.trim();
+    const tickers   = rawInput.split(',').map(t => t.trim()).filter(Boolean);
+    const provider  = document.getElementById('provider-in').value;
     const portfolio = document.getElementById('portfolio-in').value.trim();
 
-    if (!ticker) { document.getElementById('ticker-in').focus(); return; }
+    if (!tickers.length) { document.getElementById('ticker-in').focus(); return; }
 
     const btn = document.getElementById('run-btn');
     btn.disabled = true;
-    btn.textContent = 'Starting…';
     closeModal();
 
-    // Show log panel
     hide('welcome');
     hide('report-wrap');
     const logWrap = document.getElementById('log-wrap');
     logWrap.classList.remove('collapsed');
     document.getElementById('log-chev').textContent = '▾';
     show('log-wrap');
-    document.getElementById('log-title').textContent = `Researching ${ticker}…`;
-    document.getElementById('log-status').textContent = 'running';
     document.getElementById('log-body').innerHTML = '';
-    document.getElementById('topbar-title').textContent = `Running: ${ticker}`;
-    document.getElementById('topbar-meta').textContent = provider;
 
-    let res, json;
-    try {
-      res  = await fetch('/api/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, provider, short_term: isShortTerm, portfolio }),
-      });
-      json = await res.json();
-    } catch (e) {
-      appendLog(e.message, 'll-err');
-      btn.disabled = false; btn.textContent = 'Run Research';
-      return;
-    }
+    const label = tickers.length > 1 ? tickers.join(', ') : tickers[0];
+    document.getElementById('log-title').textContent  = `Researching ${label}…`;
+    document.getElementById('log-status').textContent = 'running';
+    document.getElementById('topbar-title').textContent = `Running: ${label}`;
+    document.getElementById('topbar-meta').textContent  = provider;
+    btn.textContent = 'Running…';
 
-    if (json.error) {
-      appendLog(json.error, 'll-err');
-      btn.disabled = false; btn.textContent = 'Run Research';
-      return;
-    }
-
-    const es = new EventSource(`/api/stream/${json.job_id}`);
-    es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'log')  appendLog(msg.data, 'll');
-      if (msg.type === 'done') {
-        appendLog('✓ ' + msg.data, 'll-ok');
-        document.getElementById('log-status').textContent = 'complete';
-        es.close(); btn.disabled = false; btn.textContent = 'Run Research';
-        setTimeout(() => loadReports(true), 1200);
+    // Launch all jobs in parallel, then stream all SSE connections concurrently
+    const runOne = (ticker) => new Promise(async (resolve) => {
+      let json;
+      try {
+        const res = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker, provider, short_term: isShortTerm, portfolio }),
+        });
+        json = await res.json();
+      } catch (e) {
+        appendLog(`[${ticker}] ✗ ${e.message}`, 'll-err');
+        return resolve(false);
       }
-      if (msg.type === 'error') {
-        appendLog('✗ ' + msg.data, 'll-err');
-        document.getElementById('log-status').textContent = 'error';
-        es.close(); btn.disabled = false; btn.textContent = 'Run Research';
+      if (json.error) {
+        appendLog(`[${ticker}] ✗ ${json.error}`, 'll-err');
+        return resolve(false);
       }
-      if (msg.type === 'end') es.close();
-    };
-    es.onerror = () => {
-      appendLog('Connection lost.', 'll-err');
-      es.close(); btn.disabled = false; btn.textContent = 'Run Research';
-    };
+
+      const es = new EventSource(`/api/stream/${json.job_id}`);
+      es.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'log')   appendLog(`[${ticker}] ${msg.data}`, 'll');
+        if (msg.type === 'done')  { appendLog(`[${ticker}] ✓ ${msg.data}`, 'll-ok');  es.close(); resolve(true);  }
+        if (msg.type === 'error') { appendLog(`[${ticker}] ✗ ${msg.data}`, 'll-err'); es.close(); resolve(false); }
+        if (msg.type === 'end')   { es.close(); resolve(true); }
+      };
+      es.onerror = () => {
+        appendLog(`[${ticker}] ✗ connection lost.`, 'll-err');
+        es.close(); resolve(false);
+      };
+    });
+
+    const results = await Promise.all(tickers.map(runOne));
+    const anyError = results.some(ok => !ok);
+
+    document.getElementById('log-status').textContent = anyError ? 'done (with errors)' : 'complete';
+    document.getElementById('topbar-title').textContent = 'Stock Research Platform';
+    document.getElementById('topbar-meta').textContent  = '';
+    btn.disabled = false;
+    btn.textContent = 'Run Research';
+    setTimeout(() => loadReports(), 1200);
   }
 
   function appendLog(text, cls) {

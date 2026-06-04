@@ -1092,6 +1092,31 @@ _PROVIDERS = {
 }
 
 
+def _load_latest_hyperscaler_report(max_age_days: int = 7, max_chars: int = 4000) -> "str | None":
+    """Return the content of the most recent hyperscaler report, or None if none exists
+    or the most recent one is older than max_age_days."""
+    hyper_dir = os.path.join(os.path.dirname(__file__), "reports", "hyperscaler")
+    if not os.path.isdir(hyper_dir):
+        return None
+    reports = sorted(
+        (f for f in os.listdir(hyper_dir) if f.endswith(".md")),
+        reverse=True,
+    )
+    if not reports:
+        return None
+    latest = os.path.join(hyper_dir, reports[0])
+    age_days = (datetime.today() - datetime.fromtimestamp(os.path.getmtime(latest))).days
+    if age_days > max_age_days:
+        return None
+    try:
+        content = open(latest, encoding="utf-8").read()
+        if len(content) > max_chars:
+            content = content[:max_chars] + "\n\n[report truncated for context window]"
+        return content
+    except Exception:
+        return None
+
+
 def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: str | None):
     cfg = _PROVIDERS.get(provider)
     if cfg is None:
@@ -1111,6 +1136,21 @@ def run_skill(ticker: str, portfolio_context: str, provider: str, model_name: st
     )
     if portfolio_context:
         user_msg += f"\nPortfolio context for Layer 5: {portfolio_context}\n"
+
+    hyperscaler_report = _load_latest_hyperscaler_report()
+    if hyperscaler_report:
+        user_msg += (
+            "\n\n---\n"
+            "## Hyperscaler AI Context (pre-generated report, use in Layer 1 Macro)\n"
+            "The following is the most recent hyperscaler AI CAPEX & revenue analysis. "
+            "Use it directly in Layer 1 to answer whether AI CAPEX is expanding/compressing "
+            "and whether AI is helping or hurting hyperscaler financials — do NOT call "
+            "get_hyperscaler_ai_trends() again.\n\n"
+            + hyperscaler_report
+            + "\n---\n"
+        )
+    else:
+        print("[Info] No recent hyperscaler report found (or older than 7 days). Skipping context injection.")
 
     messages = [
         {"role": "system", "content": FIVE_LAYER_SYSTEM_PROMPT},

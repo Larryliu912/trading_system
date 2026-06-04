@@ -149,7 +149,7 @@ def api_reports():
     return jsonify(list_reports())
 
 
-@app.route("/api/reports/<path:filename>")
+@app.route("/api/reports/<path:filename>", methods=["GET", "DELETE"])
 def api_report(filename):
     path = (REPORTS_DIR / filename).resolve()
     try:
@@ -158,6 +158,11 @@ def api_report(filename):
         return jsonify({"error": "Access denied"}), 403
     if not path.exists() or not path.is_file():
         return jsonify({"error": "Not found"}), 404
+
+    if request.method == "DELETE":
+        path.unlink()
+        return jsonify({"ok": True})
+
     return jsonify({
         "content":    path.read_text(encoding="utf-8", errors="replace"),
         "short_term": path.parent.name == "short_term",

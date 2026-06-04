@@ -130,6 +130,12 @@ Cover: (1) economic cycle phase, (2) monetary policy stage & rate path,
 (5) USD direction and cross-border capital flows, (6) geopolitical risks relevant to this company,
 (7) cycle classification — is this stock CYCLICAL / GROWTH / DEFENSIVE?
 
+If the company is in the AI / cloud / semiconductor / software sector:
+- If a "Hyperscaler AI Context" block is present in this message: use it directly to answer
+  whether AI CAPEX is expanding/compressing and whether AI is helping or hurting hyperscaler
+  financials. Do NOT call get_hyperscaler_ai_trends() again.
+- If no such block is present: call get_hyperscaler_ai_trends() and answer both questions.
+
 End with one-line verdict: Macro tailwind / Neutral / Headwind. State key assumptions.
 
 ---
