@@ -1,9 +1,6 @@
-# AI Trading & Stock Research System
+# AI Stock Research System
 
-An AI-powered toolkit for market analysis across two modes:
-
-1. **Single Stock Research** — deep five-layer fundamental analysis, short-term technical analysis, and hyperscaler AI CAPEX tracking for individual equities
-2. **SP500 / VIX Signal Engine** — multi-timeframe BUY / SELL / HOLD signals for S&P 500 and VIX futures
+An AI-powered toolkit for deep equity research across three modes: five-layer fundamental analysis, short-term technical analysis, and hyperscaler AI CAPEX tracking.
 
 A Flask web UI ties everything together with streaming output, a report library, and scheduled recurring runs.
 
@@ -14,18 +11,14 @@ A Flask web UI ties everything together with streaming output, a report library,
 ```
 trading_system/
 ├── single_stock_research/
-│   ├── main.py                  # CLI entry point for all stock research modes
+│   ├── main.py                  # CLI entry point for all research modes
 │   ├── iv_history.json          # Persisted LEAP IV snapshots (90-day rolling)
 │   └── reports/
 │       ├── long_term/           # Five-layer analysis reports
 │       ├── short_term/          # Short-term technical analysis reports
 │       └── hyperscaler/         # Hyperscaler AI CAPEX reports
-├── common/
-│   ├── data_utils.py            # SP500 / VIX data fetching and indicator computation
-│   └── data_postpreposs.py      # Serializes market state → AI JSON payload
 ├── web_ui/
 │   └── app.py                   # Flask UI — run analyses, stream output, schedule jobs
-├── ai_agent_connector.py        # SP500 / VIX AI signal connector
 └── prompts.py                   # All system prompts
 ```
 
@@ -116,53 +109,6 @@ python single_stock_research/main.py --hyperscaler --provider claude
 Output is saved to `single_stock_research/reports/hyperscaler/hyperscaler_YYYYMMDD_HHMMSS_PROVIDER.md`.
 
 A recent hyperscaler report (≤ 7 days old) is automatically injected as context into the five-layer macro layer, so long-term analyses stay current on AI CAPEX trends without re-fetching the data.
-
----
-
-## SP500 / VIX Signal Engine
-
-The signal engine fetches live ES=F and/or ^VIX data, computes technical indicators, and sends a compact JSON payload to an LLM to generate a directional signal.
-
-**Architecture:**
-
-```
-common/data_utils.py          — yfinance → ES=F / ^VIX bars + MA/BB/RSI/MACD
-common/data_postpreposs.py    — compresses macro + micro state → JSON payload
-ai_agent_connector.py         — sends payload to LLM, returns BIAS · SIGNAL
-```
-
-**Analysis modes** (`--analysis` flag):
-
-| Mode | Data Used | Predicts |
-|---|---|---|
-| `pure-spy` | SP500 only | SP500 direction |
-| `pure-vix` | VIX only | VIX direction |
-| `hybrid-spy` | SP500 + VIX | SP500 direction *(default)* |
-| `hybrid-vix` | SP500 + VIX | VIX direction |
-
-**Timeframes** (`--timeframe` flag):
-
-| Timeframe | Data Tiers | Predicts |
-|---|---|---|
-| `day` | Daily bars | Next trading day |
-| `4h` | Daily + 4h bars | Next 4-hour bar |
-| `15m` | Daily + 4h + 15m bars | Next 15-minute bar *(default)* |
-
-**Technical indicators** (computed on the prediction-target column):
-
-| Indicator | Parameters |
-|---|---|
-| Simple Moving Averages | 20 / 60 / 90 periods |
-| Bollinger Bands | 20-period, ±2σ |
-| RSI | 14-period (Wilder's EMA) |
-| MACD | 12 / 26 EMA, 9 signal |
-
-**Data sources:**
-
-| Asset | Ticker | Fallback |
-|---|---|---|
-| S&P 500 Futures | `ES=F` | — |
-| VIX Index | `^VIX` | `VXX` (intraday only) |
 
 ---
 
