@@ -1,102 +1,137 @@
-# SP500 + VIX AI Trading Signal System
+# AI Trading & Stock Research System
 
-An AI-powered multi-timeframe analysis system for S&P 500 and VIX futures. It fetches live market data, computes technical indicators, and prompts an external LLM to generate directional trading signals (BUY / SELL / HOLD). A built-in backtester can replay historical bars and measure how often the AI's signals were correct.
+An AI-powered toolkit for market analysis across two modes:
 
----
+1. **Single Stock Research** — deep five-layer fundamental analysis, short-term technical analysis, and hyperscaler AI CAPEX tracking for individual equities
+2. **SP500 / VIX Signal Engine** — multi-timeframe BUY / SELL / HOLD signals for S&P 500 and VIX futures
 
-## How It Works
-
-```
-                        ┌─────────────────────────────────────────┐
-                        │               main.py                   │
-                        │   predict | backtest                    │
-                        │   --timeframe  day | 4h | 15m           │
-                        │   --analysis   pure-spy | pure-vix      │
-                        │               hybrid-spy | hybrid-vix   │
-                        └────────────────┬────────────────────────┘
-                                         │
-              ┌──────────────────────────▼──────────────────────────┐
-              │                    data_utils.py                    │
-              │   yfinance → ES=F and/or ^VIX (per analysis mode)   │
-              │   Timeframes: 1d (1 year) · 4h (180 days)           │
-              │                         · 15m (60 days)             │
-              │   Indicators: MA20/60/90, Bollinger Bands, RSI, MACD│
-              │   (computed on the prediction-target column)        │
-              └──────────────────────────┬──────────────────────────┘
-                                         │
-              ┌──────────────────────────▼──────────────────────────┐
-              │                 data_postpreposs.py                 │
-              │   Compresses macro + micro state → JSON payload     │
-              │   Includes only the assets relevant to the mode     │
-              └──────────────────────────┬──────────────────────────┘
-                                         │
-              ┌──────────────────────────▼──────────────────────────┐
-              │               ai_agent_connector.py                 │
-              │      OpenAI / DeepSeek / Qwen (DashScope)           │
-              │      System prompt adapts to analysis mode          │
-              │      Returns: BIAS · VOLATILITY · SIGNAL            │
-              └──────────────────────────┬──────────────────────────┘
-                                         │
-                           (backtest mode only)
-                                         │
-              ┌──────────────────────────▼──────────────────────────┐
-              │                   backtesting.py                    │
-              │   Verifies each signal N bars into the future        │
-              │   Evaluates against SP500 or VIX (per mode)         │
-              │   Reports: Win Rate, Profit Factor, Total Return     │
-              └─────────────────────────────────────────────────────┘
-```
+A Flask web UI ties everything together with streaming output, a report library, and scheduled recurring runs.
 
 ---
 
 ## Project Structure
 
-| File | Role |
+```
+sp500index/
+├── single_stock_research/
+│   ├── main.py                  # CLI entry point for all stock research modes
+│   ├── iv_history.json          # Persisted LEAP IV snapshots (90-day rolling)
+│   └── reports/
+│       ├── long_term/           # Five-layer analysis reports
+│       ├── short_term/          # Short-term technical analysis reports
+│       └── hyperscaler/         # Hyperscaler AI CAPEX reports
+├── common/
+│   ├── data_utils.py            # SP500 / VIX data fetching and indicator computation
+│   └── data_postpreposs.py      # Serializes market state → AI JSON payload
+├── web_ui/
+│   └── app.py                   # Flask UI — run analyses, stream output, schedule jobs
+├── ai_agent_connector.py        # SP500 / VIX AI signal connector
+└── prompts.py                   # All system prompts
+```
+
+---
+
+## Single Stock Research
+
+`single_stock_research/main.py` supports three analysis modes via flags.
+
+### Five-Layer Long-Term Analysis (default)
+
+The AI works autonomously through five layers using tool calling — it decides what data to fetch and when. No data is pre-loaded.
+
+```
+Layer 1 · Macro        — economic cycle, rates, inflation, risk premium
+Layer 2 · Industry     — lifecycle, TAM, competition, policy
+Layer 3 · Fundamentals — business model, moat, financials, growth
+Layer 4 · Valuation    — P/E history, scenarios, margin of safety
+Layer 5 · Decision     — position sizing, catalysts, risks, bear case
+```
+
+**Tools available to the AI:**
+
+| Tool | Returns |
 |---|---|
-| `main.py` | Entry point — CLI argument parsing, orchestrates predict and backtest modes |
-| `data_utils.py` | Fetches market data from Yahoo Finance and computes all technical indicators |
-| `data_postpreposs.py` | Serializes processed data into a token-efficient JSON payload for the LLM |
-| `ai_agent_connector.py` | Sends the payload to the configured AI provider and returns the raw analysis |
-| `backtesting.py` | Evaluates AI signals against future price movement and computes performance metrics |
+| `get_price_history` | Monthly closes, 1m–3y returns, 52-week range, beta, analyst target |
+| `get_pe_history` | Trailing P/E series, forward P/E, PEG, historical percentile |
+| `get_financials` | Annual + quarterly income statement, margins, FCF, balance sheet |
+| `get_company_info` | Sector, industry, market cap, business description |
+| `get_macro_indicators` | VIX, 10Y/2Y yields, DXY, SPY 1-year return |
+| `get_recent_news` | Last 12 months of Yahoo Finance headlines |
 
----
-
-## Requirements
-
-- Python 3.10+
-- An API key for at least one supported AI provider
-
-Install dependencies:
+**Usage:**
 
 ```bash
-pip install yfinance openai pandas numpy
+# Basic
+python single_stock_research/main.py NVDA
+
+# With provider and portfolio context
+python single_stock_research/main.py TSLA --provider claude --portfolio "AAPL 30%, cash 50%"
+
+# Override model
+python single_stock_research/main.py MSFT --provider openai --model gpt-4o
 ```
+
+Output is saved to `single_stock_research/reports/long_term/TICKER_YYYYMMDD_HHMMSS_PROVIDER.md`.
 
 ---
 
-## Configuration
+### Short-Term Technical Analysis (`--short-term`)
 
-Set your API key as an environment variable before running. Only the key for the provider you use is required.
+Fetches 15-minute OHLCV bars, near-term option chains, and LEAP IV — then generates a directional bias (long / short / neutral) with entry, target, and stop levels. Analysis is written in Chinese.
 
-**Windows (PowerShell):**
-```powershell
-$env:OPENAI_API_KEY    = "sk-..."
-$env:DEEPSEEK_API_KEY  = "..."
-$env:DASHSCOPE_API_KEY = "..."   # Qwen / Alibaba DashScope
-```
+**Tools available to the AI:**
 
-**macOS / Linux:**
+| Tool | Returns |
+|---|---|
+| `get_short_term_data` | 15m OHLCV + EMA(9/21/50), RSI(14), MACD, Bollinger Bands, ATR(14), VWAP |
+| `get_option_chain` | ATM IV, put/call ratios, max pain, top OI strikes for nearest expirations |
+| `get_leap_iv` | LEAP IV at 6m and 1y expirations, ±10% OTM skew, IV trend vs 1w/1m history |
+| `get_price_history` | Daily chart for broader trend context |
+
+**Usage:**
+
 ```bash
-export OPENAI_API_KEY="sk-..."
-export DEEPSEEK_API_KEY="..."
-export DASHSCOPE_API_KEY="..."
+python single_stock_research/main.py NVDA --short-term
+python single_stock_research/main.py MU --short-term --provider deepseek
 ```
+
+Output is saved to `single_stock_research/reports/short_term/TICKER_YYYYMMDD_HHMMSS_PROVIDER_short_term.md`.
+
+**LEAP IV history** is automatically persisted to `single_stock_research/iv_history.json` (90-day rolling window per ticker per tenor) and used to surface rising / stable / falling IV trends on every subsequent run.
 
 ---
 
-## Analysis Modes
+### Hyperscaler AI CAPEX Analysis (`--hyperscaler`)
 
-The `--analysis` flag controls what data is fetched and what the AI is asked to predict.
+Fetches quarterly CAPEX, revenue, operating income, and recent news for **GOOGL / AMZN / MSFT / META** to answer two questions:
+
+1. Is AI CAPEX across the sector expanding or compressing?
+2. Is AI investment translating into revenue and income growth, or is it a drag?
+
+```bash
+python single_stock_research/main.py --hyperscaler
+python single_stock_research/main.py --hyperscaler --provider claude
+```
+
+Output is saved to `single_stock_research/reports/hyperscaler/hyperscaler_YYYYMMDD_HHMMSS_PROVIDER.md`.
+
+A recent hyperscaler report (≤ 7 days old) is automatically injected as context into the five-layer macro layer, so long-term analyses stay current on AI CAPEX trends without re-fetching the data.
+
+---
+
+## SP500 / VIX Signal Engine
+
+The signal engine fetches live ES=F and/or ^VIX data, computes technical indicators, and sends a compact JSON payload to an LLM to generate a directional signal.
+
+**Architecture:**
+
+```
+common/data_utils.py          — yfinance → ES=F / ^VIX bars + MA/BB/RSI/MACD
+common/data_postpreposs.py    — compresses macro + micro state → JSON payload
+ai_agent_connector.py         — sends payload to LLM, returns BIAS · SIGNAL
+```
+
+**Analysis modes** (`--analysis` flag):
 
 | Mode | Data Used | Predicts |
 |---|---|---|
@@ -105,150 +140,87 @@ The `--analysis` flag controls what data is fetched and what the AI is asked to 
 | `hybrid-spy` | SP500 + VIX | SP500 direction *(default)* |
 | `hybrid-vix` | SP500 + VIX | VIX direction |
 
-- **Pure modes** fetch a single asset and omit the other from the payload entirely, giving the AI a clean single-asset signal with no cross-asset noise.
-- **Hybrid modes** provide both SP500 and VIX data so the AI can exploit their inverse correlation. `hybrid-spy` predicts where SP500 goes; `hybrid-vix` predicts where VIX goes.
-- Technical indicators (MA, Bollinger Bands, RSI, MACD) are always computed on the **prediction target** column — VIX for vix modes, SP500 for spy modes.
-
----
-
-## Timeframes
-
-The `--timeframe` flag controls the data granularity and the prediction horizon.
+**Timeframes** (`--timeframe` flag):
 
 | Timeframe | Data Tiers | Predicts |
 |---|---|---|
-| `day` | Daily bars only | Next trading day's direction |
-| `4h` | Daily + 4-hour bars | Next 4-hour bar's direction |
-| `15m` | Daily + 4h + 15-minute bars | Next 15-minute bar's direction *(default)* |
+| `day` | Daily bars | Next trading day |
+| `4h` | Daily + 4h bars | Next 4-hour bar |
+| `15m` | Daily + 4h + 15m bars | Next 15-minute bar *(default)* |
+
+**Technical indicators** (computed on the prediction-target column):
+
+| Indicator | Parameters |
+|---|---|
+| Simple Moving Averages | 20 / 60 / 90 periods |
+| Bollinger Bands | 20-period, ±2σ |
+| RSI | 14-period (Wilder's EMA) |
+| MACD | 12 / 26 EMA, 9 signal |
+
+**Data sources:**
+
+| Asset | Ticker | Fallback |
+|---|---|---|
+| S&P 500 Futures | `ES=F` | — |
+| VIX Index | `^VIX` | `VXX` (intraday only) |
 
 ---
 
-## Usage
+## Web UI
 
-### Predict — get a live signal right now
-
-Fetches the latest market data and returns one BUY / SELL / HOLD signal.
+Start the Flask app and open `http://127.0.0.1:5000` in a browser.
 
 ```bash
-# Default: hybrid SP500 prediction on 15m timeframe via OpenAI
-python main.py predict
-
-# Pure VIX prediction (daily timeframe)
-python main.py predict --analysis pure-vix --timeframe day
-
-# Hybrid: use SP500 + VIX data to predict VIX direction (4h timeframe)
-python main.py predict --analysis hybrid-vix --timeframe 4h --provider deepseek
-
-# Pure SP500 prediction via Qwen with a specific model
-python main.py predict --analysis pure-spy --provider qwen --model qwen-max
+python web_ui/app.py
 ```
 
-**Example output:**
-```
-### BIAS ASSESSMENT
-Macro trend is bullish (ES=F above 90-day MA). 15m momentum is weakening —
-RSI at 58 and MACD histogram contracting.
-
-### VOLATILITY CHECK
-VIX is flat at 13.2. No spike or mean-reversion signal present; volatility
-is not contradicting the directional bias.
-
-### STRATEGIC SIGNAL
-BUY S&P 500 Futures — Structural uptrend intact with consolidation on the
-15m providing a low-risk re-entry point.
-
-### Confidence
-72%
-```
-
----
-
-### Backtest — measure historical accuracy
-
-Replays historical bars one at a time, asks the AI for a signal at each bar, then checks whether the price moved in the predicted direction within the lookahead window.
-
-```bash
-# Default: hybrid-spy, 15m timeframe, last 20 bars, 100-bar lookahead
-python main.py backtest --provider openai
-
-# Pure VIX backtest on daily bars
-python main.py backtest --analysis pure-vix --timeframe day --test-window 30 --lookahead 1
-
-# Hybrid VIX on 4h, wider window
-python main.py backtest --analysis hybrid-vix --timeframe 4h --test-window 50 --lookahead 4
-
-# Use DeepSeek to reduce cost on large windows
-python main.py backtest --provider deepseek --test-window 100 --lookahead 100
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--analysis` | `hybrid-spy` | Analysis mode (see table above) |
-| `--timeframe` | `15m` | Data granularity and prediction horizon |
-| `--test-window` | `20` | Number of historical bars to generate signals for |
-| `--lookahead` | `1` (day) / `4` (4h) / `100` (15m) | Bars ahead used to verify each signal |
-
-**Example output:**
-```
-============================================================
-  AI BACKTEST MODE
-  Timeframe: 15-Min  |  Analysis: Hybrid→SP500  |  Provider: OPENAI
-  Test window: 20 bars  |  Lookahead: 100 bars
-============================================================
-...
-============================================================
-  BACKTEST COMPLETE — FINAL METRICS
-============================================================
-{
-    "Summary": {
-        "Total Signals Generated": 20,
-        "Active Trades (BUY/SELL)": 17,
-        "Overall System Accuracy": "65.00%",
-        "Active Trade Win Rate": "70.59%"
-    },
-    "Financials": {
-        "Total Compounded Return": "4.821%",
-        "Gross Profits Sum": "6.103%",
-        "Gross Losses Sum": "1.282%",
-        "Profit Factor": 4.76
-    }
-}
-```
-
-> **Note:** Each bar triggers one API call. A `--test-window 20` run makes 20 calls. Factor in your provider's rate limits and token costs for large windows.
-
----
-
-## Technical Indicators
-
-Indicators are calculated on the **prediction target** price column for each timeframe tier.
-
-| Indicator | Parameters | Used for |
-|---|---|---|
-| Simple Moving Averages | 20 / 60 / 90 periods | Macro structural bias |
-| Bollinger Bands | 20-period, ±2σ | Execution context and squeeze detection |
-| RSI | 14-period (Wilder's EMA) | Momentum overbought/oversold |
-| MACD | 12 / 26 EMA, 9 signal | Momentum direction and histogram |
-
----
-
-## Data Sources
-
-| Data | Ticker | Intervals | Lookback |
-|---|---|---|---|
-| S&P 500 Futures | `ES=F` | 15m · 1h · 1d | 60 days · 180 days · 1 year |
-| VIX Index | `^VIX` (fallback: `VXX`) | 15m · 1h · 1d | 60 days · 180 days · 1 year |
-
-Data is fetched live from Yahoo Finance via `yfinance` each run. For intraday VIX data, `^VIX` is tried first; if Yahoo Finance does not serve intraday index data, `VXX` (VIX Short-Term Futures ETN) is used automatically. In pure modes, only the relevant asset is fetched.
+**Features:**
+- Run long-term or short-term analyses for any ticker, with live streaming output
+- Browse, read, and delete saved reports (long-term, short-term, hyperscaler)
+- Schedule recurring analyses — daily or weekly at a specified time, for one or more tickers
 
 ---
 
 ## Supported AI Providers
 
+All providers use the OpenAI-compatible chat completions API. Switching requires only the `--provider` flag.
+
 | Provider | Env Variable | Default Model |
 |---|---|---|
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
-| Qwen (Alibaba) | `DASHSCOPE_API_KEY` | `qwen-plus` |
+| Qwen (Alibaba DashScope) | `DASHSCOPE_API_KEY` | `qwen-plus` *(default)* |
+| Claude (Anthropic) | `ANTHROPIC_API_KEY` | `claude-opus-4-7` |
 
-All providers use the OpenAI-compatible chat completions API, so switching between them requires only a `--provider` flag change. The system prompt is automatically tailored to the active analysis mode and timeframe.
+---
+
+## Requirements
+
+- Python 3.10+
+- API key for at least one provider
+
+```bash
+pip install yfinance openai pandas numpy flask
+```
+
+---
+
+## Configuration
+
+Set API keys as environment variables before running.
+
+**Windows (PowerShell):**
+```powershell
+$env:OPENAI_API_KEY    = "sk-..."
+$env:DEEPSEEK_API_KEY  = "..."
+$env:DASHSCOPE_API_KEY = "..."
+$env:ANTHROPIC_API_KEY = "..."
+```
+
+**macOS / Linux:**
+```bash
+export OPENAI_API_KEY="sk-..."
+export DEEPSEEK_API_KEY="..."
+export DASHSCOPE_API_KEY="..."
+export ANTHROPIC_API_KEY="..."
+```
