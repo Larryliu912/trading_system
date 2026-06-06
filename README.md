@@ -12,7 +12,7 @@ A Flask web UI ties everything together with streaming output, a report library,
 ## Project Structure
 
 ```
-sp500index/
+trading_system/
 ├── single_stock_research/
 │   ├── main.py                  # CLI entry point for all stock research modes
 │   ├── iv_history.json          # Persisted LEAP IV snapshots (90-day rolling)
