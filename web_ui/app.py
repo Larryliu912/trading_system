@@ -32,6 +32,18 @@ def _seconds_until(hhmm: str) -> float:
     return (target - now).total_seconds()
 
 
+def _next_weekday_run_dt(hhmm: str) -> datetime:
+    """Return the next Mon–Fri datetime at the given HH:MM, skipping Sat/Sun."""
+    now = datetime.now()
+    h, m = map(int, hhmm.split(":"))
+    candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    while candidate.weekday() >= 5:  # 5=Sat, 6=Sun
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def _execute_schedule(schedule_id: str):
     sched = schedules.get(schedule_id)
     if not sched or sched["status"] == "cancelled":
@@ -72,12 +84,14 @@ def _execute_schedule(schedule_id: str):
         for th in threads:
             th.join()
 
-    # Re-schedule: daily or weekly
-    extra_days = 6 if sched.get("frequency") == "weekly" else 0
-    delay = _seconds_until(sched["time"]) + extra_days * 86400
-    interval_days = extra_days + 1
-    h, m = map(int, sched["time"].split(":"))
-    next_run_dt = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=interval_days)
+    # Re-schedule: weekly keeps a fixed 7-day cadence; daily skips Sat/Sun
+    if sched.get("frequency") == "weekly":
+        h, m = map(int, sched["time"].split(":"))
+        next_run_dt = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=7)
+        delay = _seconds_until(sched["time"]) + 6 * 86400
+    else:
+        next_run_dt = _next_weekday_run_dt(sched["time"])
+        delay = (next_run_dt - datetime.now()).total_seconds()
     sched["next_run"] = next_run_dt.strftime("%Y-%m-%d %H:%M")
     sched["status"] = "scheduled"
 
@@ -287,10 +301,14 @@ def api_create_schedule():
             return jsonify({"error": "No valid tickers provided"}), 400
 
     schedule_id = f"sched_{datetime.now().strftime('%H%M%S%f')}"
-    delay = _seconds_until(time_str)
-    next_run_dt = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
-    if next_run_dt <= datetime.now():
-        next_run_dt += timedelta(days=1)
+    if frequency == "daily":
+        next_run_dt = _next_weekday_run_dt(time_str)
+        delay = (next_run_dt - datetime.now()).total_seconds()
+    else:
+        delay = _seconds_until(time_str)
+        next_run_dt = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
+        if next_run_dt <= datetime.now():
+            next_run_dt += timedelta(days=1)
 
     timer = threading.Timer(delay, _execute_schedule, args=[schedule_id])
     timer.daemon = True

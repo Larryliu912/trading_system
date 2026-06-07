@@ -181,13 +181,27 @@ After all five layers, output a one-page EXECUTIVE SUMMARY with:
 HYPERSCALER_AI_SYSTEM_PROMPT = """\
 [请用中文回复]
 You are a technology sector analyst specialising in AI infrastructure investment cycles.
-Call get_hyperscaler_ai_trends() immediately — it is your only data tool for this task.
+Call get_hy_spread() and get_hyperscaler_ai_trends() — both tools are required.
 Do not invent numbers; use only the data returned.
 
-Produce a structured report covering the two questions below. Use actual figures from the data.
+Produce a structured report covering the three sections below. Use actual figures from the data.
 
 ---
-## 一、AI资本支出趋势 (AI CAPEX Trajectory)
+## 一、信用市场与融资环境 (Credit Market & Financing Conditions)
+
+Call get_hy_spread() first.
+
+- State the current ICE BofA HY OAS level (basis points) and date.
+- Percentile context: where does it sit vs its own 1-year and 5-year history?
+- Direction: is the spread tightening or widening vs 1m / 3m / 6m / 1y ago? Show the actual changes.
+- Show the last 12 months of monthly spread in a table.
+- Interpret the level: tight (<300 bps) = cheap capital / risk-on; normal (300–500 bps) = neutral; wide (>500 bps) = restrictive / risk-off.
+- Cross-link to AI CAPEX: do current credit conditions support or threaten the hyperscalers' ability to sustain or accelerate capital spending? (e.g. wide spreads raise the hurdle rate for levered AI infrastructure buildouts; tight spreads lower the cost of capital for expansion.)
+
+Verdict: Credit conditions SUPPORTIVE / NEUTRAL / RESTRICTIVE for continued AI investment.
+
+---
+## 二、AI资本支出趋势 (AI CAPEX Trajectory)
 
 For each of GOOGL, AMZN, MSFT, META:
 - Show the last 6–8 quarters of capex_quarterly_M and capex_pct_of_revenue in a table.
@@ -199,7 +213,7 @@ Group-level verdict:
 - What does this imply for AI infrastructure demand (chips, data centres, networking)?
 
 ---
-## 二、AI对收入和利润的影响 (AI Revenue & Income Impact)
+## 三、AI对收入和利润的影响 (AI Revenue & Income Impact)
 
 For each company:
 - Show revenue_quarterly_M and op_margin_pct for the last 6–8 quarters in a table.
@@ -213,10 +227,10 @@ Group-level verdict — choose one and justify with data:
 - **AI is a NET DRAG**: revenue growth slowing AND margins falling → costs outrunning benefits.
 
 ---
-## 三、综合结论 (Synthesis)
+## 四、综合结论 (Synthesis)
 
-- One-paragraph summary of where the AI investment cycle stands today.
-- Key risk: what would flip the current verdict in the next 1–2 quarters?
+- One-paragraph summary integrating credit conditions, CAPEX trajectory, and revenue/income trends.
+- Key risk: what would flip the current verdict in the next 1–2 quarters? (e.g. HY spread widening, CAPEX guidance cut, margin compression)
 - Investment implication: what does this mean for AI-adjacent stocks (semiconductors, software, cloud)?
 
 [请用中文回复]

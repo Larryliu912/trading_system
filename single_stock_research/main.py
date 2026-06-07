@@ -36,6 +36,7 @@ import warnings
 from datetime import datetime
 from functools import wraps
 
+import requests
 import pandas as pd
 import yfinance as yf
 from openai import OpenAI
@@ -777,6 +778,62 @@ def get_option_chain(ticker: str, num_expirations: int = 3) -> dict:
     }
 
 
+@_retry()
+def get_hy_spread() -> dict:
+    """Return ICE BofA US High Yield Option-Adjusted Spread from FRED (no API key required)."""
+    from io import StringIO
+
+    url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+
+    df = pd.read_csv(StringIO(resp.text), parse_dates=["DATE"])
+    df = df.rename(columns={"BAMLH0A0HYM2": "spread"})
+    df = df[df["spread"] != "."].copy()
+    df["spread"] = pd.to_numeric(df["spread"], errors="coerce")
+    df = df.dropna().sort_values("DATE").reset_index(drop=True)
+
+    if df.empty:
+        return {"error": "No HY spread data available from FRED"}
+
+    current = _round(df["spread"].iloc[-1])
+    as_of = str(df["DATE"].iloc[-1].date())
+    now = df["DATE"].iloc[-1]
+
+    df_1y = df[df["DATE"] >= now - pd.DateOffset(years=1)]
+    df_5y = df[df["DATE"] >= now - pd.DateOffset(years=5)]
+    percentile_1y = _round(float((df_1y["spread"] <= current).mean() * 100)) if len(df_1y) > 1 else None
+    percentile_5y = _round(float((df_5y["spread"] <= current).mean() * 100)) if len(df_5y) > 1 else None
+
+    def change_ago(months):
+        target = now - pd.DateOffset(months=months)
+        idx = (df["DATE"] - target).abs().idxmin()
+        return _round(current - float(df.loc[idx, "spread"]))
+
+    monthly = df.set_index("DATE").resample("ME").last()["spread"].dropna().tail(13)
+
+    return {
+        "current_spread_bps": current,
+        "as_of": as_of,
+        "percentile_1y": percentile_1y,
+        "percentile_5y": percentile_5y,
+        "change_vs": {
+            "1m":  change_ago(1),
+            "3m":  change_ago(3),
+            "6m":  change_ago(6),
+            "1y":  change_ago(12),
+        },
+        "monthly_history": {str(d.date()): _round(v) for d, v in monthly.items()},
+        "source": "ICE BofA US High Yield Index Option-Adjusted Spread (BAMLH0A0HYM2) via FRED",
+        "interpretation": {
+            "tight_under_300bps":  "risk-on, benign credit conditions, cheap capital",
+            "normal_300_to_500bps": "neutral",
+            "wide_500_to_800bps":  "risk-off / stress, tightening financial conditions",
+            "crisis_over_800bps":  "severe stress (2008 peak ~2000bps, Covid peak ~1100bps)",
+        },
+    }
+
+
 _HYPERSCALERS = ["GOOGL", "AMZN", "MSFT", "META"]
 
 
@@ -875,6 +932,7 @@ _TOOL_MAP = {
     "get_option_chain":             lambda a: get_option_chain(**a),
     "get_leap_iv":                  lambda a: get_leap_iv(**a),
     "get_hyperscaler_ai_trends":    lambda _: get_hyperscaler_ai_trends(),
+    "get_hy_spread":                lambda _: get_hy_spread(),
 }
 
 TOOLS = [
@@ -1065,6 +1123,19 @@ SHORT_TERM_TOOLS = [
 ]
 
 HYPERSCALER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_hy_spread",
+            "description": (
+                "Fetch the ICE BofA US High Yield Option-Adjusted Spread (BAMLH0A0HYM2) from FRED. "
+                "Returns the current spread in basis points, its 1y/5y percentile, changes vs 1m/3m/6m/1y ago, "
+                "and 13 months of monthly history. Use this first to assess whether credit market conditions "
+                "are supportive or restrictive for continued AI capital investment."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
     {
         "type": "function",
         "function": {

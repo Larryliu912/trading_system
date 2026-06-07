@@ -96,10 +96,11 @@ Output is saved to `single_stock_research/reports/short_term/TICKER_YYYYMMDD_HHM
 
 ### Hyperscaler AI CAPEX Analysis (`--hyperscaler`)
 
-Fetches quarterly CAPEX, revenue, operating income, and recent news for **GOOGL / AMZN / MSFT / META** to answer two questions:
+Fetches HY credit spreads and quarterly CAPEX, revenue, operating income, and recent news for **GOOGL / AMZN / MSFT / META** to answer three questions:
 
-1. Is AI CAPEX across the sector expanding or compressing?
-2. Is AI investment translating into revenue and income growth, or is it a drag?
+1. Are credit market conditions supportive or restrictive for continued AI capital investment?
+2. Is AI CAPEX across the sector expanding or compressing?
+3. Is AI investment translating into revenue and income growth, or is it a drag?
 
 ```bash
 python single_stock_research/main.py --hyperscaler
