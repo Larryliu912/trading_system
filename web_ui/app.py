@@ -186,15 +186,60 @@ def api_report(filename):
 @app.route("/api/run", methods=["POST"])
 def api_run():
     data = request.json or {}
-    ticker = data.get("ticker", "").upper().strip()
     provider = data.get("provider", "qwen")
+    task_type = data.get("task_type", "stock")  # "stock" | "hyperscaler"
+
+    if provider not in ("openai", "deepseek", "qwen", "claude"):
+        return jsonify({"error": "Invalid provider"}), 400
+
+    if task_type == "hyperscaler":
+        job_id = f"hyperscaler_{datetime.now().strftime('%H%M%S%f')}"
+        q: queue.Queue = queue.Queue()
+        jobs[job_id] = {"queue": q, "status": "running", "ticker": "hyperscaler"}
+
+        def run_hyperscaler():
+            cmd = [
+                sys.executable,
+                str(REPO_ROOT / "single_stock_research" / "main.py"),
+                "--hyperscaler",
+                "--provider", provider,
+            ]
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=str(REPO_ROOT),
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    env=os.environ.copy(),
+                )
+                for line in proc.stdout:
+                    q.put({"type": "log", "data": line.rstrip("\n\r")})
+                proc.wait()
+                if proc.returncode == 0:
+                    jobs[job_id]["status"] = "done"
+                    q.put({"type": "done", "data": "Hyperscaler analysis complete! Refresh the sidebar to see the new report."})
+                else:
+                    jobs[job_id]["status"] = "error"
+                    q.put({"type": "error", "data": f"Process exited with code {proc.returncode}"})
+            except Exception as e:
+                jobs[job_id]["status"] = "error"
+                q.put({"type": "error", "data": str(e)})
+            finally:
+                q.put(None)
+
+        threading.Thread(target=run_hyperscaler, daemon=True).start()
+        return jsonify({"job_id": job_id})
+
+    # Default: single-stock analysis
+    ticker = data.get("ticker", "").upper().strip()
     short_term = bool(data.get("short_term", True))
     portfolio = data.get("portfolio", "").strip()
 
     if not ticker or not ticker.replace(".", "").replace("-", "").replace("^", "").isalnum():
         return jsonify({"error": "Invalid ticker"}), 400
-    if provider not in ("openai", "deepseek", "qwen", "claude"):
-        return jsonify({"error": "Invalid provider"}), 400
 
     job_id = f"{ticker}_{datetime.now().strftime('%H%M%S%f')}"
     q: queue.Queue = queue.Queue()

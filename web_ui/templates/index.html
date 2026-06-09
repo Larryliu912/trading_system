@@ -55,6 +55,8 @@
     #new-btn:hover { background: #2563eb; }
     #schedule-btn      { background: #7c3aed; }
     #schedule-btn:hover { background: #6d28d9; }
+    #hyper-btn      { background: #ea580c; width: 100%; }
+    #hyper-btn:hover { background: #c2410c; }
 
     /* schedules panel */
     #sched-panel {
@@ -311,7 +313,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* ── Modal ───────────────────────────────────── */
-    #overlay, #sched-overlay {
+    #overlay, #sched-overlay, #hyper-overlay {
       display: none;
       position: fixed;
       inset: 0;
@@ -320,7 +322,7 @@
       align-items: center;
       justify-content: center;
     }
-    #overlay.show, #sched-overlay.show { display: flex; }
+    #overlay.show, #sched-overlay.show, #hyper-overlay.show { display: flex; }
 
     #modal {
       background: #fff;
@@ -439,6 +441,9 @@
   <div class="sidebar-btn-row">
     <button id="new-btn" onclick="openModal()">+ New Research</button>
     <button id="schedule-btn" onclick="openSchedModal()">⏰ Schedule</button>
+  </div>
+  <div class="sidebar-btn-row">
+    <button id="hyper-btn" onclick="openHyperModal()">⚡ Hyperscaler Analysis</button>
   </div>
   <div id="search-wrap">
     <input id="search-input" type="text" placeholder="Filter tickers…" oninput="filterReports()">
@@ -559,6 +564,32 @@
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeSchedModal()">Cancel</button>
       <button class="btn-schedule" id="sched-btn" onclick="createSchedule()">Schedule</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Hyperscaler Modal ───────────────────────── -->
+<div id="hyper-overlay" onclick="hyperOverlayClick(event)">
+  <div id="modal">
+    <h2>Hyperscaler AI Analysis</h2>
+    <p style="font-size:13px;color:#64748b;margin-bottom:20px">
+      Fetches HY credit spreads + quarterly CAPEX, revenue, and operating margin
+      for GOOGL · AMZN · MSFT · META.
+    </p>
+
+    <div class="fg">
+      <label>AI Provider</label>
+      <select id="hyper-provider-in">
+        <option value="deepseek">DeepSeek</option>
+        <option value="claude">Claude (Anthropic)</option>
+      </select>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeHyperModal()">Cancel</button>
+      <button class="btn-run" id="hyper-run-btn" onclick="runHyperscaler()"
+              style="background:#ea580c">Run Analysis</button>
     </div>
   </div>
 </div>
@@ -928,6 +959,77 @@
   async function deleteSchedule(id) {
     await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
     loadSchedules();
+  }
+
+  // ── Hyperscaler modal ──────────────────────────
+  function openHyperModal() {
+    document.getElementById('hyper-overlay').classList.add('show');
+  }
+  function closeHyperModal() {
+    document.getElementById('hyper-overlay').classList.remove('show');
+  }
+  function hyperOverlayClick(e) {
+    if (e.target === document.getElementById('hyper-overlay')) closeHyperModal();
+  }
+
+  async function runHyperscaler() {
+    const provider = document.getElementById('hyper-provider-in').value;
+    const btn = document.getElementById('hyper-run-btn');
+    btn.disabled = true;
+    closeHyperModal();
+
+    hide('welcome');
+    hide('report-wrap');
+    const logWrap = document.getElementById('log-wrap');
+    logWrap.classList.remove('collapsed');
+    document.getElementById('log-chev').textContent = '▾';
+    show('log-wrap');
+    document.getElementById('log-body').innerHTML = '';
+
+    document.getElementById('log-title').textContent  = 'Running Hyperscaler AI Analysis…';
+    document.getElementById('log-status').textContent = 'running';
+    document.getElementById('topbar-title').textContent = 'Hyperscaler AI — GOOGL · AMZN · MSFT · META';
+    document.getElementById('topbar-meta').textContent  = provider;
+
+    let json;
+    try {
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_type: 'hyperscaler', provider }),
+      });
+      json = await res.json();
+    } catch (e) {
+      appendLog(`✗ ${e.message}`, 'll-err');
+      btn.disabled = false;
+      return;
+    }
+    if (json.error) {
+      appendLog(`✗ ${json.error}`, 'll-err');
+      btn.disabled = false;
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const es = new EventSource(`/api/stream/${json.job_id}`);
+      es.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'log')   appendLog(msg.data, 'll');
+        if (msg.type === 'done')  { appendLog(`✓ ${msg.data}`, 'll-ok');  es.close(); resolve(); }
+        if (msg.type === 'error') { appendLog(`✗ ${msg.data}`, 'll-err'); es.close(); resolve(); }
+        if (msg.type === 'end')   { es.close(); resolve(); }
+      };
+      es.onerror = () => {
+        appendLog('✗ connection lost.', 'll-err');
+        es.close(); resolve();
+      };
+    });
+
+    document.getElementById('log-status').textContent = 'complete';
+    document.getElementById('topbar-title').textContent = 'Stock Research Platform';
+    document.getElementById('topbar-meta').textContent  = '';
+    btn.disabled = false;
+    setTimeout(() => loadReports(), 1200);
   }
 
   // ── Helpers ────────────────────────────────────

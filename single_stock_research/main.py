@@ -787,8 +787,15 @@ def get_hy_spread() -> dict:
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
 
-    df = pd.read_csv(StringIO(resp.text), parse_dates=["DATE"])
-    df = df.rename(columns={"BAMLH0A0HYM2": "spread"})
+    df = pd.read_csv(StringIO(resp.text))
+    # Strip BOM and whitespace from column names (FRED CSVs often start with ﻿)
+    df.columns = [c.lstrip("﻿").strip() for c in df.columns]
+    date_col   = next((c for c in df.columns if "date" in c.lower()), None)
+    spread_col = next((c for c in df.columns if "date" not in c.lower()), None)
+    if date_col is None or spread_col is None:
+        return {"error": f"Unexpected FRED CSV format. Columns: {list(df.columns)}"}
+    df = df.rename(columns={date_col: "DATE", spread_col: "spread"})
+    df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
     df = df[df["spread"] != "."].copy()
     df["spread"] = pd.to_numeric(df["spread"], errors="coerce")
     df = df.dropna().sort_values("DATE").reset_index(drop=True)
@@ -1159,7 +1166,7 @@ _PROVIDERS = {
     "openai":   ("https://api.openai.com/v1",                         "OPENAI_API_KEY",    "gpt-4o",             {}),
     "deepseek": ("https://api.deepseek.com/v1",                       "DEEPSEEK_API_KEY",  "deepseek-v4-pro",      {}),
     "qwen":     ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY", "qwen-plus",          {}),
-    "claude":   ("https://api.anthropic.com/v1",                      "ANTHROPIC_API_KEY", "claude-opus-4-7",  {"default_headers": {"anthropic-version": "2023-06-01"}}),
+    "claude":   ("https://api.anthropic.com/v1",                      "ANTHROPIC_API_KEY", "claude-opus-4-8",  {"default_headers": {"anthropic-version": "2023-06-01"}}),
 }
 
 
