@@ -42,7 +42,7 @@ import yfinance as yf
 from openai import OpenAI
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from prompts import FIVE_LAYER_SYSTEM_PROMPT, SHORT_TERM_SYSTEM_PROMPT, HYPERSCALER_AI_SYSTEM_PROMPT
+from prompts import FIVE_LAYER_SYSTEM_PROMPT, SHORT_TERM_SYSTEM_PROMPT, HYPERSCALER_AI_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT
 
 warnings.filterwarnings("ignore")
 
@@ -467,6 +467,49 @@ def get_short_term_data(ticker: str, days: int = 5) -> dict:
         },
         "recent_candles": recent_candles,
     }
+
+
+@_retry()
+def get_higher_tf_bars(ticker: str) -> dict:
+    """Return recent 4h (resampled from 1h) and daily OHLCV bars for multi-timeframe analysis."""
+    t = yf.Ticker(ticker)
+    result: dict = {"ticker": ticker}
+
+    # 4h bars: yfinance has no native 4h interval — fetch 1h and resample
+    try:
+        h1 = t.history(period="60d", interval="1h", auto_adjust=True)
+        if not h1.empty:
+            h1.index = _tz_strip(h1.index)
+            h4 = h1.resample("4h").agg(
+                Open=("Open", "first"), High=("High", "max"),
+                Low=("Low", "min"),   Close=("Close", "last"),
+                Volume=("Volume", "sum"),
+            ).dropna(subset=["Close"])
+            result["bars_4h"] = [
+                {"time": str(idx), "o": _round(row.Open), "h": _round(row.High),
+                 "l": _round(row.Low), "c": _round(row.Close),
+                 "v": int(row.Volume) if pd.notna(row.Volume) else 0}
+                for idx, row in h4.tail(30).iterrows()
+            ]
+    except Exception as e:
+        result["bars_4h_error"] = str(e)
+
+    # Daily bars: last 30 trading days
+    try:
+        d1 = t.history(period="60d", interval="1d", auto_adjust=True)
+        if not d1.empty:
+            d1.index = _tz_strip(d1.index)
+            result["bars_1d"] = [
+                {"time": str(idx.date()), "o": _round(row.Open), "h": _round(row.High),
+                 "l": _round(row.Low), "c": _round(row.Close),
+                 "v": int(row.Volume) if pd.notna(row.Volume) else 0}
+                for idx, row in d1.tail(30).iterrows()
+            ]
+    except Exception as e:
+        result["bars_1d_error"] = str(e)
+
+    result["note"] = "4h bars resampled from 1h yfinance data. Daily bars = last 30 trading days."
+    return result
 
 
 _IV_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iv_history.json")
@@ -940,6 +983,7 @@ _TOOL_MAP = {
     "get_leap_iv":                  lambda a: get_leap_iv(**a),
     "get_hyperscaler_ai_trends":    lambda _: get_hyperscaler_ai_trends(),
     "get_hy_spread":                lambda _: get_hy_spread(),
+    "get_higher_tf_bars":           lambda a: get_higher_tf_bars(**a),
 }
 
 TOOLS = [
@@ -1093,6 +1137,24 @@ SHORT_TERM_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_higher_tf_bars",
+            "description": (
+                "Fetch recent 4-hour (resampled from 1h) and daily OHLCV bars for multi-timeframe "
+                "Al Brooks Price Action analysis. Returns bars_4h (last 30 × 4h bars) and "
+                "bars_1d (last 30 daily bars). Call this alongside get_short_term_data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                },
+                "required": ["ticker"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_price_history",
             "description": (
                 "Fetch daily price history for broader trend context. "
@@ -1157,6 +1219,8 @@ HYPERSCALER_TOOLS = [
         },
     },
 ]
+
+CHAT_TOOLS = list({t["function"]["name"]: t for t in TOOLS + SHORT_TERM_TOOLS + HYPERSCALER_TOOLS}.values())
 
 # ---------------------------------------------------------------------------
 # Agent loop
@@ -1429,6 +1493,112 @@ def run_hyperscaler_skill(provider: str, model_name: str | None):
 
 
 # ---------------------------------------------------------------------------
+# Chat mode
+# ---------------------------------------------------------------------------
+
+_CHAT_SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_sessions")
+
+
+def _load_chat_history(session_id: str) -> list:
+    os.makedirs(_CHAT_SESSIONS_DIR, exist_ok=True)
+    path = os.path.join(_CHAT_SESSIONS_DIR, f"{session_id}.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_chat_history(session_id: str, messages: list):
+    os.makedirs(_CHAT_SESSIONS_DIR, exist_ok=True)
+    path = os.path.join(_CHAT_SESSIONS_DIR, f"{session_id}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(messages, f, ensure_ascii=False, indent=2, default=str)
+
+
+def _assistant_msg_to_dict(msg) -> dict:
+    d: dict = {"role": "assistant", "content": msg.content}
+    if getattr(msg, "tool_calls", None):
+        d["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+            }
+            for tc in msg.tool_calls
+        ]
+    return d
+
+
+def run_chat_turn(user_message: str, session_id: str, provider: str, model_name: "str | None"):
+    cfg = _PROVIDERS.get(provider)
+    if cfg is None:
+        print(json.dumps({"t": "error", "msg": f"Unknown provider '{provider}'"}), flush=True)
+        return
+
+    base_url, env_key, default_model, client_kwargs = cfg
+    api_key = os.getenv(env_key)
+    if not api_key:
+        print(json.dumps({"t": "error", "msg": f"Missing env var {env_key}"}), flush=True)
+        return
+
+    model = model_name or default_model
+    client = OpenAI(base_url=base_url, api_key=api_key, **client_kwargs)
+
+    history = _load_chat_history(session_id)
+    history.append({"role": "user", "content": user_message})
+
+    api_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}] + history
+
+    create_kwargs = dict(model=model, messages=api_messages, tools=CHAT_TOOLS, tool_choice="auto")
+    if provider != "claude":
+        create_kwargs["temperature"] = 0.3
+
+    try:
+        while True:
+            response = client.chat.completions.create(**create_kwargs)
+            choice = response.choices[0]
+
+            if choice.finish_reason == "tool_calls":
+                asst_dict = _assistant_msg_to_dict(choice.message)
+                api_messages.append(choice.message)
+                history.append(asst_dict)
+
+                for tc in choice.message.tool_calls:
+                    fn_name = tc.function.name
+                    try:
+                        fn_args = json.loads(tc.function.arguments)
+                    except Exception:
+                        fn_args = {}
+
+                    print(json.dumps({"t": "tool_call", "name": fn_name, "args": fn_args}), flush=True)
+
+                    try:
+                        result = _TOOL_MAP[fn_name](fn_args)
+                        print(json.dumps({"t": "tool_result", "name": fn_name, "ok": True}), flush=True)
+                    except Exception as e:
+                        result = {"error": str(e)}
+                        print(json.dumps({"t": "tool_result", "name": fn_name, "ok": False, "error": str(e)}), flush=True)
+
+                    tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                    api_messages.append(tool_msg)
+                    history.append(tool_msg)
+            else:
+                content = choice.message.content or ""
+                history.append({"role": "assistant", "content": content})
+                _save_chat_history(session_id, history)
+                print(json.dumps({"t": "text", "content": content}), flush=True)
+                print(json.dumps({"t": "done"}), flush=True)
+                break
+    except Exception as e:
+        print(json.dumps({"t": "error", "msg": str(e)}), flush=True)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1462,9 +1632,30 @@ def main():
         action="store_true",
         help="Run standalone hyperscaler AI CAPEX & revenue analysis (GOOGL/AMZN/MSFT/META)",
     )
+    parser.add_argument(
+        "--chat",
+        default=None,
+        metavar="MESSAGE",
+        help="Run a single chat turn with the given user message (requires --session-id)",
+    )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        metavar="SESSION_ID",
+        help="Chat session ID for conversation persistence",
+    )
     args = parser.parse_args()
 
-    if args.hyperscaler:
+    if args.chat is not None:
+        if not args.session_id:
+            parser.error("--session-id is required for --chat mode")
+        run_chat_turn(
+            user_message=args.chat,
+            session_id=args.session_id,
+            provider=args.provider,
+            model_name=args.model,
+        )
+    elif args.hyperscaler:
         run_hyperscaler_skill(
             provider=args.provider,
             model_name=args.model,

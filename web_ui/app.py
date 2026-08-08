@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import uuid
 import subprocess
 import threading
 import queue
@@ -311,6 +312,85 @@ def api_stream(job_id):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/chat/new", methods=["POST"])
+def api_chat_new():
+    return jsonify({"session_id": str(uuid.uuid4())})
+
+
+@app.route("/api/chat/<session_id>/send", methods=["POST"])
+def api_chat_send(session_id):
+    data = request.json or {}
+    message = (data.get("message") or "").strip()
+    provider = data.get("provider", "deepseek")
+
+    if not message:
+        return jsonify({"error": "Empty message"}), 400
+    if provider not in ("openai", "deepseek", "qwen", "claude"):
+        return jsonify({"error": "Invalid provider"}), 400
+
+    job_id = f"chat_{datetime.now().strftime('%H%M%S%f')}"
+    q: queue.Queue = queue.Queue()
+    jobs[job_id] = {"queue": q, "status": "running"}
+
+    def run():
+        cmd = [
+            sys.executable,
+            str(REPO_ROOT / "single_stock_research" / "main.py"),
+            "--chat", message,
+            "--session-id", session_id,
+            "--provider", provider,
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=str(REPO_ROOT),
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=os.environ.copy(),
+            )
+            for line in proc.stdout:
+                line = line.rstrip("\n\r")
+                if line:
+                    q.put({"type": "log", "data": line})
+            proc.wait()
+        except Exception as e:
+            q.put({"type": "error", "data": str(e)})
+        finally:
+            jobs[job_id]["status"] = "done"
+            q.put(None)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/chat/<session_id>/history", methods=["GET"])
+def api_chat_history(session_id):
+    path = REPO_ROOT / "single_stock_research" / "chat_sessions" / f"{session_id}.json"
+    if not path.exists():
+        return jsonify([])
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        visible = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in raw
+            if msg.get("role") in ("user", "assistant") and msg.get("content")
+        ]
+        return jsonify(visible)
+    except Exception:
+        return jsonify([])
+
+
+@app.route("/api/chat/<session_id>/clear", methods=["POST"])
+def api_chat_clear(session_id):
+    path = REPO_ROOT / "single_stock_research" / "chat_sessions" / f"{session_id}.json"
+    if path.exists():
+        path.unlink()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/schedule", methods=["POST"])
